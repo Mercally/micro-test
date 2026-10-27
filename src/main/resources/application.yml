@@ -1,0 +1,42 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: docs-simulator
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/docs}
+    username: ${DATABASE_USERNAME:docs}
+    password: ${DATABASE_PASSWORD:docs}
+    hikari:
+      maximum-pool-size: 10
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  jackson:
+    default-property-inclusion: non_null
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+app:
+  s3:
+    region: ${AWS_REGION:us-east-1}
+    endpoint: ${S3_ENDPOINT_URL:}
+    presign-endpoint: ${S3_PRESIGN_ENDPOINT_URL:${S3_ENDPOINT_URL:}}
+    bucket: ${S3_BUCKET:docs-simulator}
+  simulator:
+    failures-before-success: ${SIMULATOR_FAILURES_BEFORE_SUCCESS:0}
+    failure-probability: ${SIMULATOR_FAILURE_PROBABILITY:0.2}
+
+logging:
+  level:
+    com.example.docssimulator: INFO

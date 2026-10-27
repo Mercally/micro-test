@@ -1,0 +1,61 @@
+CREATE SCHEMA IF NOT EXISTS endpoint0;
+CREATE SCHEMA IF NOT EXISTS endpoint1;
+CREATE SCHEMA IF NOT EXISTS endpoint2;
+CREATE SCHEMA IF NOT EXISTS endpoint3;
+CREATE SCHEMA IF NOT EXISTS endpoint4;
+CREATE SCHEMA IF NOT EXISTS endpoint5;
+
+CREATE TABLE IF NOT EXISTS endpoint0.sales (
+    id UUID PRIMARY KEY,
+    external_reference VARCHAR(120) NOT NULL UNIQUE,
+    customer_name VARCHAR(200) NOT NULL,
+    customer_email VARCHAR(320) NOT NULL,
+    product_code VARCHAR(80) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS endpoint1.documents (
+    id UUID PRIMARY KEY,
+    sale_id UUID NOT NULL UNIQUE,
+    file_name VARCHAR(200) NOT NULL,
+    content BYTEA NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS endpoint2.policies (
+    id UUID PRIMARY KEY,
+    sale_id UUID NOT NULL UNIQUE,
+    policy_number VARCHAR(80) NOT NULL UNIQUE,
+    status VARCHAR(32) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS endpoint3.uploads (
+    id UUID PRIMARY KEY,
+    sale_id UUID NOT NULL UNIQUE,
+    document_id UUID NOT NULL,
+    bucket VARCHAR(200) NOT NULL,
+    object_key VARCHAR(500) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS endpoint4.policy_completions (
+    id UUID PRIMARY KEY,
+    sale_id UUID NOT NULL UNIQUE,
+    policy_id UUID NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS endpoint5.document_releases (
+    id UUID PRIMARY KEY,
+    sale_id UUID NOT NULL UNIQUE,
+    document_id UUID NOT NULL,
+    object_key VARCHAR(500) NOT NULL,
+    download_url TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    released_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

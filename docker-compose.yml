@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: docs
+      POSTGRES_USER: docs
+      POSTGRES_PASSWORD: docs
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docs -d docs"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  localstack:
+    image: localstack/localstack:3.8
+    environment:
+      SERVICES: s3
+      AWS_DEFAULT_REGION: us-east-1
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ["CMD", "bash", "-c", " awslocal s3 ls >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  docs:
+    build: .
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/docs
+      DATABASE_USERNAME: docs
+      DATABASE_PASSWORD: docs
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      S3_ENDPOINT_URL: http://localstack:4566
+      S3_PRESIGN_ENDPOINT_URL: http://localhost:4566
+      S3_BUCKET: docs-simulator
+      SIMULATOR_FAILURES_BEFORE_SUCCESS: ${SIMULATOR_FAILURES_BEFORE_SUCCESS:-0}
+      SIMULATOR_FAILURE_PROBABILITY: ${SIMULATOR_FAILURE_PROBABILITY:-0.2}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
