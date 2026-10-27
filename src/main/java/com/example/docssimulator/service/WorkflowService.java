@@ -3,20 +3,22 @@ package com.example.docssimulator.service;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
-import com.example.docssimulator.api.Requests;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.example.docssimulator.api.Requests;
 
 @Service
 public class WorkflowService {
@@ -48,6 +50,32 @@ public class WorkflowService {
         }
         log.info("endpoint0 sale registered saleId={} externalReference={}", saleId, request.externalReference());
         return Map.of("saleId", saleId.toString(), "status", "PENDING");
+    }
+
+    @Transactional
+    public Map<String, Object> updateSaleStatus(UUID saleId, String status) {
+
+        // Validar estados permitidos
+        if (!Set.of("PROCESSING", "COMPLETED", "FAILED").contains(status)) {
+            throw new IllegalArgumentException("Estado no permitido: " + status);
+        }
+
+        // Validar existencia de la venta
+        requireSale(saleId);
+
+        // Actualizar estado
+        jdbcTemplate.update("""
+        UPDATE endpoint0.sales
+        SET status = ?
+        WHERE id = ?
+        """, status, saleId);
+
+        log.info("Sale status updated saleId={} status={}", saleId, status);
+
+        return Map.of(
+                "saleId", saleId.toString(),
+                "status", status
+        );
     }
 
     @Transactional

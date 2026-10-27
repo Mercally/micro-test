@@ -1,5 +1,7 @@
 package com.example.docssimulator.api;
 
+import org.springframework.web.bind.annotation.PatchMapping;
+
 import java.util.Map;
 
 import com.example.docssimulator.service.WorkflowService;
@@ -23,6 +25,18 @@ public class WorkflowController {
     @PostMapping("/endpoint0/sales")
     ResponseEntity<Map<String, Object>> registerSale(@Valid @RequestBody Requests.RegisterSaleRequest request) {
         return ResponseEntity.ok(workflowService.registerSale(request));
+    }
+
+    @PatchMapping("/endpoint0/sales/status")
+    ResponseEntity<Map<String, Object>> updateSaleStatus(
+            @Valid @RequestBody Requests.UpdateSaleStatusRequest request) {
+
+        return ResponseEntity.ok(
+                workflowService.updateSaleStatus(
+                        request.saleId(),
+                        request.status()
+                )
+        );
     }
 
     @PostMapping("/endpoint1/documents")

@@ -1,0 +1,139 @@
+# IntelliJ IDEA HTTP Client
+# Ejecutar las peticiones en orden, de 0 a 5.
+@baseUrl = http://localhost:8080
+
+### 0. Registrar venta y capturar saleId
+POST {{baseUrl}}/api/v1/endpoint0/sales
+Content-Type: application/json
+
+{
+  "externalReference": "SALE-2026-002",
+  "customerName": "Josue Mercadillo",
+  "customerEmail": "josue.mercadillo@example.com",
+  "productCode": "PROD-001"
+}
+
+> {%
+    client.test("Venta registrada", function() {
+        client.assert(response.status === 200, "Se esperaba HTTP 200");
+        client.assert(!!response.body.saleId, "Falta saleId");
+    });
+    if (response.status === 200 && response.body.saleId) {
+        client.global.set("saleId", response.body.saleId);
+    }
+%}
+
+
+### 1. Crear documento y capturar documentId
+POST {{baseUrl}}/api/v1/endpoint1/documents
+Content-Type: application/json
+
+{
+  "saleId": "{{saleId}}"
+}
+
+> {%
+    client.test("Documento creado", function() {
+        client.assert(response.status === 200, "Se esperaba HTTP 200");
+        client.assert(!!response.body.documentId, "Falta documentId");
+    });
+    if (response.status === 200 && response.body.documentId) {
+        client.global.set("documentId", response.body.documentId);
+    }
+%}
+
+### Cambiar venta a PROCESSING
+PATCH {{baseUrl}}/api/v1/endpoint0/sales/status
+Content-Type: application/json
+
+{
+  "saleId": "{{saleId}}",
+  "status": "PROCESSING"
+}
+
+### 2. Crear póliza y capturar policyId
+POST {{baseUrl}}/api/v1/endpoint2/policies
+Content-Type: application/json
+
+{
+  "saleId": "{{saleId}}"
+}
+
+> {%
+    client.test("Póliza creada", function() {
+        client.assert(response.status === 200, "Se esperaba HTTP 200");
+        client.assert(!!response.body.policyId, "Falta policyId");
+    });
+    if (response.status === 200 && response.body.policyId) {
+        client.global.set("policyId", response.body.policyId);
+    }
+%}
+
+### 3. Subir documento a S3
+POST {{baseUrl}}/api/v1/endpoint3/documents/upload
+Content-Type: application/json
+
+{
+  "saleId": "{{saleId}}",
+  "documentId": "{{documentId}}"
+}
+
+> {%
+    client.test("Documento subido", function() {
+        client.assert(response.status === 200, "Se esperaba HTTP 200");
+        client.assert(response.body.status === "UPLOADED", "Estado inesperado");
+    });
+%}
+
+### 4. Completar póliza
+POST {{baseUrl}}/api/v1/endpoint4/policies/complete
+Content-Type: application/json
+
+{
+  "saleId": "{{saleId}}",
+  "policyId": "{{policyId}}"
+}
+
+> {%
+    client.test("Póliza completada", function() {
+        client.assert(response.status === 200, "Se esperaba HTTP 200");
+        client.assert(response.body.status === "COMPLETED", "Estado inesperado");
+    });
+%}
+
+### Cambiar venta a COMPLETED
+PATCH {{baseUrl}}/api/v1/endpoint0/sales/status
+Content-Type: application/json
+
+{
+  "saleId": "{{saleId}}",
+  "status": "COMPLETED"
+}
+
+### 5. Liberar documento y capturar URL de descarga
+POST {{baseUrl}}/api/v1/endpoint5/documents/release
+Content-Type: application/json
+
+{
+  "saleId": "{{saleId}}",
+  "documentId": "{{documentId}}"
+}
+
+> {%
+    client.test("Documento liberado", function() {
+        client.assert(response.status === 200, "Se esperaba HTTP 200");
+        client.assert(!!response.body.downloadUrl, "Falta downloadUrl");
+    });
+    if (response.status === 200 && response.body.downloadUrl) {
+        client.global.set("downloadUrl", response.body.downloadUrl);
+    }
+%}
+
+### Cambiar venta a FAILED
+PATCH {{baseUrl}}/api/v1/endpoint0/sales/status
+Content-Type: application/json
+
+{
+  "saleId": "{{saleId}}",
+  "status": "FAILED"
+}

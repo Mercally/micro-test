@@ -20,7 +20,7 @@ El servicio queda en `http://localhost:8080`; health check en `/actuator/health`
 Todos reciben JSON y devuelven el estado y los identificadores del paso. Los campos UUID se obtienen de la respuesta del paso anterior.
 
 | Endpoint | Operación | Esquema PostgreSQL |
-| --- | --- | --- |
+| -------------------------------------------- | ------------------------------------------------------------ | ------------------ |
 | `POST /api/v1/endpoint0/sales` | Registra venta en estado `PENDING` | `endpoint0` |
 | `POST /api/v1/endpoint1/documents` | Genera y persiste un PDF de prueba | `endpoint1` |
 | `POST /api/v1/endpoint2/policies` | Crea póliza en estado `INITIAL` | `endpoint2` |
@@ -60,3 +60,14 @@ La definición desplegable de Step Functions está en `statemachine/docs-orchest
 En despliegues reales, configura `AWS_REGION`, `S3_BUCKET` y credenciales mediante el proveedor estándar de AWS (por ejemplo, un IAM role). `S3_ENDPOINT_URL` solo se necesita para S3 compatible/LocalStack; `S3_PRESIGN_ENDPOINT_URL` permite que las URL firmadas usen un hostname accesible por el consumidor. El bucket debe permitir `HeadBucket`, `CreateBucket` cuando todavía no exista y `PutObject`; el rol que consuma las URL necesita acceso a `GetObject`. Para producción conviene crear el bucket por infraestructura, restringir el rol y proteger el API Gateway.
 
 Los pasos son idempotentes por referencia externa o por venta. El PDF se conserva en PostgreSQL hasta completar la carga; la URL de descarga es temporal y se renueva en cada llamada de liberación.
+
+Comandos
+
+Listar buckets:
+`aws --endpoint-url=http://localhost:4566 s3 ls`
+
+Listar archivos en bucket:
+`aws --endpoint-url=http://localhost:4566 s3 ls s3://docs-simulator/ --recursive`
+
+Descargar archivo:
+``aws --endpoint-url=http://localhost:4566 s3 cp s3://docs-simulator/sales/SALE_ID/DOCUMENT_ID.pdf  ./downloads/documento.pdf``
