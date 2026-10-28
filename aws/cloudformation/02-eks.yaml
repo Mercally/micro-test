@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: demo-seguros - EKS 1.35, nodos AL2023 privados, acceso explicito y addons.
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: demo-seguros-networking
+  AdminPublicCidr:
+    Type: String
+    AllowedPattern: '((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/32'
+    ConstraintDescription: Proporcione su IPv4 publica con mascara /32; nunca /0.
+    Description: Obligatorio. IPv4 publica del administrador con /32. Sin valor predeterminado.
+  AdminPrincipalArn:
+    Type: String
+    AllowedPattern: 'arn:aws:iam::[0-9]{12}:(role|user)/[A-Za-z0-9+=,.@_/-]+'
+    Description: Obligatorio. ARN IAM persistente de rol o usuario; no ARN STS de sesion.
+  KubernetesVersion:
+    Type: String
+    Default: '1.35'
+    AllowedValues: ['1.35']
+  NodeReleaseVersion:
+    Type: String
+    AllowedPattern: '1\.35\.[0-9]+-[0-9]{8}'
+    Description: Release AL2023 x86_64 comprobado en SSM por scripts/preflight.py.
+  VpcCniVersion:
+    Type: String
+  KubeProxyVersion:
+    Type: String
+  CoreDnsVersion:
+    Type: String
+  PodIdentityVersion:
+    Type: String
+Resources:
+  ClusterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join
+        - ''
+        - - /aws/eks/
+          - {Fn::ImportValue: !Sub '${NetworkStackName}-EKSClusterName'}
+          - /cluster
+      RetentionInDays: 7
+  ClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: eks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEKSClusterPolicy
+  Cluster:
+    Type: AWS::EKS::Cluster
+    DependsOn: ClusterLogGroup
+    Properties:
+      Name: {Fn::ImportValue: !Sub '${NetworkStackName}-EKSClusterName'}
+      Version: !Ref KubernetesVersion
+      RoleArn: !GetAtt ClusterRole.Arn
+      # Los addons iniciales permiten arrancar nodos; despues se adoptan como administrados.
+      BootstrapSelfManagedAddons: true
+      AccessConfig:
+        AuthenticationMode: API
+        BootstrapClusterCreatorAdminPermissions: false
+      UpgradePolicy: {SupportType: STANDARD}
+      ResourcesVpcConfig:
+        SubnetIds:
+          - {Fn::ImportValue: !Sub '${NetworkStackName}-EKSPrivateSubnetAId'}
+          - {Fn::ImportValue: !Sub '${NetworkStackName}-EKSPrivateSubnetBId'}
+        EndpointPrivateAccess: true
+        EndpointPublicAccess: true
+        PublicAccessCidrs: [!Ref AdminPublicCidr]
+      KubernetesNetworkConfig:
+        IpFamily: ipv4
+        ServiceIpv4Cidr: 172.20.0.0/16
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+            - Type: authenticator
+      Tags:
+        - Key: Project
+          Value: demo-seguros
+        - Key: PrivateConnectivity
+          # EKS no admite comas en tags; conservar el import y separar los IDs con espacios.
+          Value: !Join
+            - ' '
+            - !Split
+              - ','
+              - {Fn::ImportValue: !Sub '${NetworkStackName}-PrivateConnectivityReady'}
+  AdminAccess:
+    Type: AWS::EKS::AccessEntry
+    Properties:
+      ClusterName: !Ref Cluster
+      PrincipalArn: !Ref AdminPrincipalArn
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: !Sub arn:${AWS::Partition}:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope: {Type: cluster}
+  NodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly
+        # shortcut: CNI usa rol del nodo en este lab; separar con Pod Identity para produccion.
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonEKS_CNI_Policy
+  NodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 20
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+  NodesA:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref Cluster
+      NodeRole: !GetAtt NodeRole.Arn
+      Subnets: [{Fn::ImportValue: !Sub '${NetworkStackName}-EKSPrivateSubnetAId'}]
+      Version: !Ref KubernetesVersion
+      ReleaseVersion: !Ref NodeReleaseVersion
+      AmiType: AL2023_x86_64_STANDARD
+      InstanceTypes: [t3.medium]
+      CapacityType: ON_DEMAND
+      ScalingConfig: {MinSize: 1, DesiredSize: 1, MaxSize: 2}
+      UpdateConfig: {MaxUnavailable: 1}
+      LaunchTemplate:
+        Id: !Ref NodeLaunchTemplate
+        Version: !GetAtt NodeLaunchTemplate.LatestVersionNumber
+      Tags: {Project: demo-seguros}
+  NodesB:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref Cluster
+      NodeRole: !GetAtt NodeRole.Arn
+      Subnets: [{Fn::ImportValue: !Sub '${NetworkStackName}-EKSPrivateSubnetBId'}]
+      Version: !Ref KubernetesVersion
+      ReleaseVersion: !Ref NodeReleaseVersion
+      AmiType: AL2023_x86_64_STANDARD
+      InstanceTypes: [t3.medium]
+      CapacityType: ON_DEMAND
+      ScalingConfig: {MinSize: 1, DesiredSize: 1, MaxSize: 2}
+      UpdateConfig: {MaxUnavailable: 1}
+      LaunchTemplate:
+        Id: !Ref NodeLaunchTemplate
+        Version: !GetAtt NodeLaunchTemplate.LatestVersionNumber
+      Tags: {Project: demo-seguros}
+  VpcCni:
+    Type: AWS::EKS::Addon
+    DependsOn: [NodesA, NodesB]
+    Properties:
+      ClusterName: !Ref Cluster
+      AddonName: vpc-cni
+      AddonVersion: !Ref VpcCniVersion
+      ResolveConflicts: OVERWRITE
+  KubeProxy:
+    Type: AWS::EKS::Addon
+    DependsOn: [NodesA, NodesB]
+    Properties:
+      ClusterName: !Ref Cluster
+      AddonName: kube-proxy
+      AddonVersion: !Ref KubeProxyVersion
+      ResolveConflicts: OVERWRITE
+  CoreDns:
+    Type: AWS::EKS::Addon
+    DependsOn: [VpcCni, KubeProxy]
+    Properties:
+      ClusterName: !Ref Cluster
+      AddonName: coredns
+      AddonVersion: !Ref CoreDnsVersion
+      ResolveConflicts: OVERWRITE
+  PodIdentity:
+    Type: AWS::EKS::Addon
+    DependsOn: [NodesA, NodesB]
+    Properties:
+      ClusterName: !Ref Cluster
+      AddonName: eks-pod-identity-agent
+      AddonVersion: !Ref PodIdentityVersion
+      ResolveConflicts: OVERWRITE
+  DemoRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+      EncryptionConfiguration: {EncryptionType: AES256}
+  ControllerRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: {ScanOnPush: true}
+      EncryptionConfiguration: {EncryptionType: AES256}
+Outputs:
+  ClusterName:
+    Value: !Ref Cluster
+    Export: {Name: !Sub '${AWS::StackName}-ClusterName'}
+  ClusterSecurityGroupId:
+    Value: !GetAtt Cluster.ClusterSecurityGroupId
+    Export: {Name: !Sub '${AWS::StackName}-ClusterSecurityGroupId'}
+  ClusterEndpoint:
+    Value: !GetAtt Cluster.Endpoint
+    Export: {Name: !Sub '${AWS::StackName}-ClusterEndpoint'}
+  DemoRepositoryUri:
+    Value: !GetAtt DemoRepository.RepositoryUri
+    Export: {Name: !Sub '${AWS::StackName}-DemoRepositoryUri'}
+  ControllerRepositoryUri:
+    Value: !GetAtt ControllerRepository.RepositoryUri
+    Export: {Name: !Sub '${AWS::StackName}-ControllerRepositoryUri'}

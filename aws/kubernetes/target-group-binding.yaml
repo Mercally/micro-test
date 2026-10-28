@@ -1,0 +1,13 @@
+# Sin networking: SG y sus reglas pertenecen exclusivamente a CloudFormation.
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: demo
+  namespace: demo-seguros
+spec:
+  targetGroupARN: ${TARGET_GROUP_ARN}
+  targetType: ip
+  vpcID: ${VPC_ID}
+  serviceRef:
+    name: demo
+    port: 80

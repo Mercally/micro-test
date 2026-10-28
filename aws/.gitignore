@@ -1,0 +1,4 @@
+generated/
+parameters/*.local.json
+__pycache__/
+scripts/__pycache__/

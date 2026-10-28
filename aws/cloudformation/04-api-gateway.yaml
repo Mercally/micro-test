@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: demo-seguros - HTTP API regional, autorizacion IAM y VPC Link V2 a NLB interno.
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: demo-seguros-networking
+  IngressStackName:
+    Type: String
+    Default: demo-seguros-ingress
+Resources:
+  Api:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-http'
+      ProtocolType: HTTP
+  VpcLink:
+    Type: AWS::ApiGatewayV2::VpcLink
+    Properties:
+      Name: !Sub '${AWS::StackName}-link'
+      SubnetIds:
+        - {Fn::ImportValue: !Sub '${NetworkStackName}-EKSPrivateSubnetAId'}
+        - {Fn::ImportValue: !Sub '${NetworkStackName}-EKSPrivateSubnetBId'}
+      SecurityGroupIds:
+        - {Fn::ImportValue: !Sub '${IngressStackName}-VpcLinkSecurityGroupId'}
+  Integration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref Api
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      ConnectionType: VPC_LINK
+      ConnectionId: !Ref VpcLink
+      IntegrationUri: {Fn::ImportValue: !Sub '${IngressStackName}-ListenerArn'}
+      PayloadFormatVersion: '1.0'
+      TimeoutInMillis: 29000
+      RequestParameters:
+        overwrite:path: '$request.path'
+  Route:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref Api
+      RouteKey: '$default'
+      AuthorizationType: AWS_IAM
+      Target: !Sub integrations/${Integration}
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    DependsOn: Route
+    Properties:
+      ApiId: !Ref Api
+      StageName: '$default'
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+Outputs:
+  ApiEndpoint:
+    Value: !GetAtt Api.ApiEndpoint
+    Export: {Name: !Sub '${AWS::StackName}-ApiEndpoint'}
+  InvokeResourceArn:
+    Description: Otorgar execute-api:Invoke sobre este ARN al cliente de prueba.
+    Value: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*'
+    Export: {Name: !Sub '${AWS::StackName}-InvokeResourceArn'}

@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: demo-seguros - CloudFormation administra NLB/listener/TG; Kubernetes solo registra targets.
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: demo-seguros-networking
+  EksStackName:
+    Type: String
+    Default: demo-seguros-eks
+Resources:
+  NlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: NLB interno; entrada solo desde VPC Link
+      VpcId: {Fn::ImportValue: !Sub '${NetworkStackName}-VpcId'}
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          DestinationSecurityGroupId: {Fn::ImportValue: !Sub '${EksStackName}-ClusterSecurityGroupId'}
+  VpcLinkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC Link de API Gateway; salida solo al NLB
+      VpcId: {Fn::ImportValue: !Sub '${NetworkStackName}-VpcId'}
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          DestinationSecurityGroupId: !Ref NlbSecurityGroup
+  NlbFromVpcLink:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref NlbSecurityGroup
+      SourceSecurityGroupId: !Ref VpcLinkSecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+  PodsFromNlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: {Fn::ImportValue: !Sub '${EksStackName}-ClusterSecurityGroupId'}
+      SourceSecurityGroupId: !Ref NlbSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+  Nlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: network
+      Scheme: internal
+      IpAddressType: ipv4
+      Subnets:
+        - {Fn::ImportValue: !Sub '${NetworkStackName}-EKSPrivateSubnetAId'}
+        - {Fn::ImportValue: !Sub '${NetworkStackName}-EKSPrivateSubnetBId'}
+      SecurityGroups: [!Ref NlbSecurityGroup]
+      LoadBalancerAttributes:
+        - Key: load_balancing.cross_zone.enabled
+          Value: 'true'
+      Tags: [{Key: Project, Value: demo-seguros}]
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: {Fn::ImportValue: !Sub '${NetworkStackName}-VpcId'}
+      TargetType: ip
+      Protocol: TCP
+      Port: 8080
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /healthz
+      HealthCheckPort: traffic-port
+      TargetGroupAttributes:
+        - Key: preserve_client_ip.enabled
+          Value: 'false'
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+      # Sin Targets: el controlador los reconcilia desde EndpointSlices, incluso al escalar.
+      Tags: [{Key: Project, Value: demo-seguros}]
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Nlb
+      Port: 80
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+  ControllerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: pods.eks.amazonaws.com}
+            Action: [sts:AssumeRole, sts:TagSession]
+            Condition:
+              StringEquals:
+                aws:RequestTag/eks-cluster-name: {Fn::ImportValue: !Sub '${EksStackName}-ClusterName'}
+                aws:RequestTag/kubernetes-namespace: kube-system
+                aws:RequestTag/kubernetes-service-account: aws-load-balancer-controller
+      Policies:
+        - PolicyName: ReconcileExistingTargetsOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['ec2:Describe*', 'elasticloadbalancing:Describe*']
+                Resource: '*'
+              - Effect: Allow
+                Action: [elasticloadbalancing:RegisterTargets, elasticloadbalancing:DeregisterTargets]
+                Resource: !Ref TargetGroup
+  ControllerIdentity:
+    Type: AWS::EKS::PodIdentityAssociation
+    Properties:
+      ClusterName: {Fn::ImportValue: !Sub '${EksStackName}-ClusterName'}
+      Namespace: kube-system
+      ServiceAccount: aws-load-balancer-controller
+      RoleArn: !GetAtt ControllerRole.Arn
+Outputs:
+  ListenerArn:
+    Value: !Ref Listener
+    Export: {Name: !Sub '${AWS::StackName}-ListenerArn'}
+  TargetGroupArn:
+    Value: !Ref TargetGroup
+    Export: {Name: !Sub '${AWS::StackName}-TargetGroupArn'}
+  NlbDnsName:
+    Value: !GetAtt Nlb.DNSName
+    Export: {Name: !Sub '${AWS::StackName}-NlbDnsName'}
+  VpcLinkSecurityGroupId:
+    Value: !Ref VpcLinkSecurityGroup
+    Export: {Name: !Sub '${AWS::StackName}-VpcLinkSecurityGroupId'}

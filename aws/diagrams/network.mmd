@@ -1,0 +1,86 @@
+---
+config:
+  layout: elk
+  theme: base
+  themeVariables:
+    fontFamily: Arial
+    fontSize: 16px
+  flowchart:
+    wrappingWidth: 260
+---
+flowchart TB
+  users["Clientes autorizados<br/>HTTPS + IAM SigV4"]
+  admin["Administrador<br/>IPv4 pública /32 + ARN IAM"]
+  subgraph region["AWS · us-east-1 · demo-seguros"]
+    api["HTTP API Gateway<br/>Servicio regional fuera de la VPC"]
+    cp["Control plane EKS 1.35<br/>VPC administrada por AWS<br/>API pública /32 + API privada"]
+    awsapis["Servicios AWS regionales<br/>ECR privado · EC2 · EKS<br/>EKS Auth · ELB"]
+    s3["S3 regional<br/>Capas ECR: starport-layer-bucket"]
+    futureMsg["FUTURO · 05<br/>SQS + DLQ · Step Functions<br/>Requisitos y flujo pendientes"]
+    subgraph vpc["VPC 10.20.0.0/16 · DNS habilitado · sin NAT"]
+      igw["Internet Gateway<br/>Solo ruta pública"]
+      publicrt["PublicRouteTable<br/>10.20.0.0/16 → local<br/>0.0.0.0/0 → IGW"]
+      link["VPC Link V2<br/>ENI en ambas subredes EKS"]
+      s3ep["Gateway endpoint S3<br/>Prefix list → endpoint<br/>Solo tablas EKS A/B"]
+      subgraph aza["Zona us-east-1a"]
+        subgraph publicA["Pública · 10.20.0.0/24 · 251 IP utilizables"]
+          pa["Reservada · sin cargas"]
+        end
+        subgraph eksA["Privada EKS · 10.20.16.0/20 · 4091 IP utilizables"]
+          rta["RT EKS A<br/>local + prefix list S3<br/>Sin ruta por defecto"]
+          ena["ENI API EKS privada"]
+          epa["6 ENI de endpoints<br/>HTTPS 443 · DNS privado"]
+          la["ENI VPC Link A"]
+          nlba["NLB interno único · ENI A<br/>TCP :80 → IP targets :8080"]
+          na["Nodo administrado A · AL2023<br/>Pods: demo + controller + addons"]
+        end
+        subgraph dataA["Datos · 10.20.64.0/24 · 251 IP utilizables"]
+          da["RT datos A · solo local<br/>Subred creada · sin base de datos"]
+        end
+      end
+      subgraph azb["Zona us-east-1b"]
+        subgraph publicB["Pública · 10.20.1.0/24 · 251 IP utilizables"]
+          pb["Reservada · sin cargas"]
+        end
+        subgraph eksB["Privada EKS · 10.20.32.0/20 · 4091 IP utilizables"]
+          rtb["RT EKS B<br/>local + prefix list S3<br/>Sin ruta por defecto"]
+          enb["ENI API EKS privada"]
+          epb["6 ENI de endpoints<br/>HTTPS 443 · DNS privado"]
+          lb["ENI VPC Link B"]
+          nlbb["NLB interno único · ENI B<br/>TCP :80 → IP targets :8080"]
+          nb["Nodo administrado B · AL2023<br/>Pods: demo + controller + addons"]
+        end
+        subgraph dataB["Datos · 10.20.65.0/24 · 251 IP utilizables"]
+          db["RT datos B · solo local<br/>Subred creada · sin base de datos"]
+        end
+      end
+      futureDB["FUTURO · 06 · PostgreSQL<br/>SQL por DNS privado + TCP 5432<br/>Producción: Aurora, dos AZ<br/>Demo: servicio y tamaño por definir"]
+    end
+  end
+  users --> api
+  admin -->|"HTTPS 443 · /32 + AccessEntry"| cp
+  api --> link
+  link --> la & lb
+  la --> nlba --> na
+  lb --> nlbb --> nb
+  cp <-->|"Conexión privada · ENI administradas por EKS"| ena & enb
+  ena <--> na
+  enb <--> nb
+  na --> epa
+  nb --> epb
+  epa & epb -->|"PrivateLink"| awsapis
+  na --> rta
+  nb --> rtb
+  rta & rtb --> s3ep
+  s3ep --> s3
+  pa & pb --> publicrt
+  publicrt --> igw
+  na & nb -.->|"Futuro · SG explícito"| futureDB
+  na -.->|"Futuro · endpoints y permisos por definir"| futureMsg
+  legend["Línea continua: incluido en laboratorio<br/>Línea discontinua: futuro, no creado<br/>Todas las IP de recursos son dinámicas<br/>CFN: NLB + listener + TG + SG<br/>Kubernetes: registro de IP de pods"]
+  classDef future fill:#fff5df,stroke:#b7791f,stroke-width:2px,stroke-dasharray:6 4,color:#5d3b04
+  classDef managed fill:#eaf1ff,stroke:#3465a4,color:#173b68
+  classDef net fill:#e5f5f0,stroke:#28766b,color:#194f47
+  class futureMsg,futureDB future
+  class api,cp,awsapis,s3 managed
+  class igw,publicrt,rta,rtb,s3ep,epa,epb net

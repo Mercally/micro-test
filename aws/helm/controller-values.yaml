@@ -1,0 +1,18 @@
+# Chart 3.6.2 / controller v3.6.2. Completar region, vpcId e imagen privada con --set.
+replicaCount: 2
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+region: us-east-1
+enableShield: false
+enableWaf: false
+enableWafv2: false
+enableServiceMutatorWebhook: false
+enableBackendSecurityGroup: false
+createIngressClassResource: false
+ingressClassParams:
+  create: false
+enableCertManager: false
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {memory: 256Mi}

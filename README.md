@@ -71,3 +71,19 @@ Listar archivos en bucket:
 
 Descargar archivo:
 ``aws --endpoint-url=http://localhost:4566 s3 cp s3://docs-simulator/sales/SALE_ID/DOCUMENT_ID.pdf  ./downloads/documento.pdf``
+
+Build image:
+
+AMD64
+``docker buildx build --platform linux/amd64 -t docs-simulator:1.0.o --load .``
+
+ARM64
+
+`docker buildx build --platform linux/arm64 -t docs-simulator:1.0.o --load .`
+
+```
+docker buildx build \
+  --platform linux/amd64 \
+  -t docs-simulator:1.0.0 \
+  --load .
+```

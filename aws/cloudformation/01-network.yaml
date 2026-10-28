@@ -1,0 +1,558 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  demo-seguros: red en us-east-1, dos AZ, seis subredes y endpoints privados.
+  Sin NAT Gateway. Desplegar por completo antes de 02-eks.yaml.
+
+# Desplegar en us-east-1: las AZ se fijan expresamente en us-east-1a y us-east-1b.
+# Direccionamiento dentro de 10.20.0.0/16, sin solapamientos:
+#   Capa       us-east-1a       us-east-1b
+#   Publica    10.20.0.0/24     10.20.1.0/24
+#   EKS        10.20.16.0/20    10.20.32.0/20
+#   Datos      10.20.64.0/24    10.20.65.0/24
+# EKS tiene ruta local y gateway S3; datos solo local. Sin salida a Internet.
+# Separar tablas no bloquea trafico entre capas: eso corresponde a security groups
+# y, cuando aplique, NetworkPolicies en las siguientes plantillas.
+
+Parameters:
+  EKSClusterName:
+    Type: String
+    Default: demo-seguros
+    MinLength: 1
+    MaxLength: 100
+    AllowedPattern: "[A-Za-z0-9][A-Za-z0-9_-]*"
+    ConstraintDescription: >-
+      Debe comenzar con una letra o numero y contener solo letras, numeros,
+      guiones o guiones bajos; maximo 100 caracteres.
+    Description: >-
+      Nombre del cluster EKS. 02-eks.yaml importa este nombre para evitar diferencias.
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.20.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-us-east-1a"
+        - Key: Tier
+          Value: public
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+        - Key: !Sub "kubernetes.io/cluster/${EKSClusterName}"
+          Value: shared
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.20.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-us-east-1b"
+        - Key: Tier
+          Value: public
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+        - Key: !Sub "kubernetes.io/cluster/${EKSClusterName}"
+          Value: shared
+
+  EKSPrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.20.16.0/20
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-private-us-east-1a"
+        - Key: Tier
+          Value: eks-private
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+        - Key: !Sub "kubernetes.io/cluster/${EKSClusterName}"
+          Value: shared
+
+  EKSPrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.20.32.0/20
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-private-us-east-1b"
+        - Key: Tier
+          Value: eks-private
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+        - Key: !Sub "kubernetes.io/cluster/${EKSClusterName}"
+          Value: shared
+
+  # Sin tags Kubernetes: evita que el controlador descubra estas subredes para LB.
+  DataSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.20.64.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-data-us-east-1a"
+        - Key: Tier
+          Value: data
+
+  DataSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.20.65.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-data-us-east-1b"
+        - Key: Tier
+          Value: data
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-rt"
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # Una tabla EKS por AZ permite agregar NAT por AZ sin cambiar asociaciones.
+  EKSPrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-private-rt-us-east-1a"
+
+  EKSPrivateRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-private-rt-us-east-1b"
+
+  EKSPrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref EKSPrivateSubnetA
+      RouteTableId: !Ref EKSPrivateRouteTableA
+
+  EKSPrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref EKSPrivateSubnetB
+      RouteTableId: !Ref EKSPrivateRouteTableB
+
+  DataRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-data-rt-us-east-1a"
+
+  DataRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-data-rt-us-east-1b"
+
+  DataSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DataSubnetA
+      RouteTableId: !Ref DataRouteTableA
+
+  DataSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DataSubnetB
+      RouteTableId: !Ref DataRouteTableB
+
+  # Politicas de endpoint limitan transporte; no sustituyen permisos IAM.
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTPS desde subredes EKS a endpoints privados
+      VpcId:
+        Ref: VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 10.20.16.0/20
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 10.20.32.0/20
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 10.20.0.0/16
+  EC2Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ec2
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: EKSPrivateSubnetA
+      - Ref: EKSPrivateSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: '*'
+          Action:
+          - ec2:Describe*
+          - ec2:CreateNetworkInterface
+          - ec2:AttachNetworkInterface
+          - ec2:DeleteNetworkInterface
+          - ec2:ModifyNetworkInterfaceAttribute
+          - ec2:AssignPrivateIpAddresses
+          - ec2:UnassignPrivateIpAddresses
+          - ec2:CreateTags
+          Resource: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  ECRApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ecr.api
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: EKSPrivateSubnetA
+      - Ref: EKSPrivateSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: '*'
+          Action:
+          - ecr:GetAuthorizationToken
+          - ecr:BatchCheckLayerAvailability
+          - ecr:GetDownloadUrlForLayer
+          - ecr:BatchGetImage
+          Resource: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  ECRDkrEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ecr.dkr
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: EKSPrivateSubnetA
+      - Ref: EKSPrivateSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: '*'
+          Action:
+          - ecr:GetAuthorizationToken
+          - ecr:BatchCheckLayerAvailability
+          - ecr:GetDownloadUrlForLayer
+          - ecr:BatchGetImage
+          Resource: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  EKSEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.eks
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: EKSPrivateSubnetA
+      - Ref: EKSPrivateSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: '*'
+          Action:
+          - eks:DescribeCluster
+          Resource: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  EKSAuthEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.eks-auth
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: EKSPrivateSubnetA
+      - Ref: EKSPrivateSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: '*'
+          Action:
+          - eks-auth:AssumeRoleForPodIdentity
+          Resource: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  ELBEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.elasticloadbalancing
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: EKSPrivateSubnetA
+      - Ref: EKSPrivateSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: '*'
+          Action:
+          - elasticloadbalancing:Describe*
+          - elasticloadbalancing:RegisterTargets
+          - elasticloadbalancing:DeregisterTargets
+          Resource: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Gateway
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+      - Ref: EKSPrivateRouteTableA
+      - Ref: EKSPrivateRouteTableB
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: '*'
+          Action: s3:GetObject
+          Resource:
+            Fn::Sub: arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*
+
+# Los exports llevan el nombre del stack de red como prefijo.
+# Las listas se exportan como CSV; consumir con Fn::Split y Fn::ImportValue.
+Outputs:
+  VpcId:
+    Description: ID de la VPC.
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+
+  VpcCidr:
+    Description: Bloque CIDR de la VPC.
+    Value: !GetAtt VPC.CidrBlock
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcCidr"
+
+  InternetGatewayId:
+    Description: ID del Internet Gateway.
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-InternetGatewayId"
+
+  PublicSubnetAId:
+    Description: Subred publica en us-east-1a.
+    Value: !Ref PublicSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnetAId"
+
+  PublicSubnetBId:
+    Description: Subred publica en us-east-1b.
+    Value: !Ref PublicSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnetBId"
+
+  EKSPrivateSubnetAId:
+    Description: Subred privada EKS en us-east-1a.
+    Value: !Ref EKSPrivateSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-EKSPrivateSubnetAId"
+
+  EKSPrivateSubnetBId:
+    Description: Subred privada EKS en us-east-1b.
+    Value: !Ref EKSPrivateSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-EKSPrivateSubnetBId"
+
+  DataSubnetAId:
+    Description: Subred privada de datos en us-east-1a.
+    Value: !Ref DataSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-DataSubnetAId"
+
+  DataSubnetBId:
+    Description: Subred privada de datos en us-east-1b.
+    Value: !Ref DataSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-DataSubnetBId"
+
+  PublicSubnetIds:
+    Description: IDs publicos separados por coma, orden AZ a y b.
+    Value: !Join [",", [!Ref PublicSubnetA, !Ref PublicSubnetB]]
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnetIds"
+
+  EKSPrivateSubnetIds:
+    Description: IDs privados EKS separados por coma, orden AZ a y b.
+    Value: !Join [",", [!Ref EKSPrivateSubnetA, !Ref EKSPrivateSubnetB]]
+    Export:
+      Name: !Sub "${AWS::StackName}-EKSPrivateSubnetIds"
+
+  DataSubnetIds:
+    Description: IDs de datos separados por coma, orden AZ a y b.
+    Value: !Join [",", [!Ref DataSubnetA, !Ref DataSubnetB]]
+    Export:
+      Name: !Sub "${AWS::StackName}-DataSubnetIds"
+
+  PublicRouteTableId:
+    Description: Tabla publica compartida por ambas AZ, con ruta al IGW.
+    Value: !Ref PublicRouteTable
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicRouteTableId"
+
+  EKSPrivateRouteTableAId:
+    Description: Tabla EKS us-east-1a; sin ruta por defecto.
+    Value: !Ref EKSPrivateRouteTableA
+    Export:
+      Name: !Sub "${AWS::StackName}-EKSPrivateRouteTableAId"
+
+  EKSPrivateRouteTableBId:
+    Description: Tabla EKS us-east-1b; sin ruta por defecto.
+    Value: !Ref EKSPrivateRouteTableB
+    Export:
+      Name: !Sub "${AWS::StackName}-EKSPrivateRouteTableBId"
+
+  DataRouteTableAId:
+    Description: Tabla de datos us-east-1a; sin ruta por defecto.
+    Value: !Ref DataRouteTableA
+    Export:
+      Name: !Sub "${AWS::StackName}-DataRouteTableAId"
+
+  DataRouteTableBId:
+    Description: Tabla de datos us-east-1b; sin ruta por defecto.
+    Value: !Ref DataRouteTableB
+    Export:
+      Name: !Sub "${AWS::StackName}-DataRouteTableBId"
+
+  EKSClusterName:
+    Value: !Ref EKSClusterName
+    Export:
+      Name: !Sub '${AWS::StackName}-EKSClusterName'
+  PrivateConnectivityReady:
+    Description: Importar establece dependencia con todos los endpoints antes de EKS.
+    Value: !Join [',', [!Ref EC2Endpoint, !Ref ECRApiEndpoint, !Ref ECRDkrEndpoint, !Ref EKSEndpoint, !Ref EKSAuthEndpoint, !Ref ELBEndpoint, !Ref S3Endpoint]]
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateConnectivityReady'

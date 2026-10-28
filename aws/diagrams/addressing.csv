@@ -1,0 +1,18 @@
+Componente,AZ,Subred,CIDR,IP utilizables,Tabla de rutas,Destino,Propósito
+VPC,us-east-1 (regional),Contiene seis subredes,10.20.0.0/16,Se calcula por subred,Cinco tablas explícitas,10.20.0.0/16 → local,DNS habilitado; red del laboratorio
+Pública,us-east-1a,PublicSubnetA,10.20.0.0/24,251,PublicRouteTable,local; 0.0.0.0/0 → IGW,"Reserva pública, sin cargas"
+EKS privada,us-east-1a,EKSPrivateSubnetA,10.20.16.0/20,4091,EKSPrivateRouteTableA,local; prefix list S3 → gateway,"Nodos, pods y ENI privadas"
+Datos privada,us-east-1a,DataSubnetA,10.20.64.0/24,251,DataRouteTableA,10.20.0.0/16 → local,Reserva para base futura
+Pública,us-east-1b,PublicSubnetB,10.20.1.0/24,251,PublicRouteTable,local; 0.0.0.0/0 → IGW,"Reserva pública, sin cargas"
+EKS privada,us-east-1b,EKSPrivateSubnetB,10.20.32.0/20,4091,EKSPrivateRouteTableB,local; prefix list S3 → gateway,"Nodos, pods y ENI privadas"
+Datos privada,us-east-1b,DataSubnetB,10.20.65.0/24,251,DataRouteTableB,10.20.0.0/16 → local,Reserva para base futura
+Nodos/pods EKS,a y b,EKS A/B,10.20.16.0/20; 10.20.32.0/20,Dinámicas; comparten pool anterior,RT EKS A/B,"API privada, endpoints y NLB",Cómputo y demo
+NLB interno,a y b,EKS A/B,Mismos CIDR EKS,Dinámicas; comparten pool EKS,RT EKS A/B,IP de pods:8080,Ingreso interno; DNS generado
+VPC Link ENI,a y b,EKS A/B,Mismos CIDR EKS,Dinámicas; comparten pool EKS,RT EKS A/B,NLB:80 por ruta local,Integración HTTP API
+Seis endpoints Interface,a y b,EKS A/B,Mismos CIDR EKS,6 ENI por AZ; IP dinámicas del pool EKS,RT EKS A/B,Servicios AWS:443 por PrivateLink,"ECR api/dkr, EC2, EKS, EKS Auth, ELB"
+ENI privadas control plane,a y b,EKS A/B,Mismos CIDR EKS,Dinámicas; asignación administrada por EKS,RT EKS A/B,API privada y nodos,Conexión al control plane externo
+Gateway endpoint S3,Regional,No ocupa subred,Prefix list regional S3,No consume IP de subred,RT EKS A/B,Bucket de capas ECR,Descarga privada de imágenes
+IGW,Regional/VPC,No ocupa subred,No aplica,No aplica,PublicRouteTable,Internet,Salida únicamente de subredes públicas
+API Gateway / control plane,"Regional, fuera de VPC cliente",No aplica,Administrado por AWS,No asignadas por usuario,No aplica,VPC Link / ENI EKS,Servicios administrados
+Futuro PostgreSQL,Por definir; producción a y b,Datos A/B reservadas,10.20.64.0/24; 10.20.65.0/24,Sin asignación; no creado,RT datos A/B,"local, TCP 5432 con SG",DNS privado del motor futuro
+Futuro SQS/DLQ + Step Functions,Regional,Fuera de VPC cliente,No aplica,No aplica,Por definir endpoints futuros,API regional,Mensajería y orquestación pendientes

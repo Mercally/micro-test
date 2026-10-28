@@ -1,0 +1,4 @@
+[
+  {"ParameterKey": "NetworkStackName", "ParameterValue": "demo-seguros-networking"},
+  {"ParameterKey": "EksStackName", "ParameterValue": "demo-seguros-eks"}
+]
