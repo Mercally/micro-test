@@ -53,11 +53,11 @@ $env:SIMULATOR_FAILURE_PROBABILITY = "0"
 docker compose up --build
 ```
 
-La definición desplegable de Step Functions está en `statemachine/docs-orchestrator.asl.json`. Sustituye `YOUR_API_ID` y `YOUR_REGION` por el hostname del API Gateway que exponga el servicio. Cada tarea tiene siete reintentos con backoff exponencial y termina en `WorkflowFailed` cuando se agotan.
+El laboratorio AWS privado está en [aws/README.md](aws/README.md). `statemachine/docs-orchestrator.asl.json` refleja su dispatcher Step Functions → SQS; sustituye `${QUEUE_URL}` por la cola creada. Su éxito confirma el encolado, no la ejecución de los endpoints. El micro todavía no implementa consumo SQS ni llamadas a Step Functions; `workflow.http` sigue siendo una prueba HTTP manual.
 
 ## Configuración S3 en AWS
 
-En despliegues reales, configura `AWS_REGION`, `S3_BUCKET` y credenciales mediante el proveedor estándar de AWS (por ejemplo, un IAM role). `S3_ENDPOINT_URL` solo se necesita para S3 compatible/LocalStack; `S3_PRESIGN_ENDPOINT_URL` permite que las URL firmadas usen un hostname accesible por el consumidor. El bucket debe permitir `HeadBucket`, `CreateBucket` cuando todavía no exista y `PutObject`; el rol que consuma las URL necesita acceso a `GetObject`. Para producción conviene crear el bucket por infraestructura, restringir el rol y proteger el API Gateway.
+En despliegues reales, configura `AWS_REGION`, `S3_BUCKET` y credenciales mediante el proveedor estándar de AWS (por ejemplo, un IAM role). `S3_ENDPOINT_URL` solo se necesita para S3 compatible/LocalStack; `S3_PRESIGN_ENDPOINT_URL` permite que las URL firmadas usen un hostname accesible por el consumidor. El arranque llama `HeadBucket` (requiere `s3:ListBucket`) e intenta `CreateBucket` si el bucket no existe. La carga necesita `s3:PutObject`; el rol que firma las URL necesita `s3:GetObject`. El laboratorio crea los buckets por infraestructura, concede permisos por rol y mantiene los servicios HTTP privados. No concede `CreateBucket` a los pods.
 
 Los pasos son idempotentes por referencia externa o por venta. El PDF se conserva en PostgreSQL hasta completar la carga; la URL de descarga es temporal y se renueva en cada llamada de liberación.
 
@@ -81,9 +81,13 @@ ARM64
 
 `docker buildx build --platform linux/arm64 -t docs-simulator:1.0.o --load .`
 
+Publish new docker image to ECR:
+
+CLI:
+
 ```
 docker buildx build \
-  --platform linux/amd64 \
-  -t docs-simulator:1.0.0 \
-  --load .
+  --platform linux/amd64,linux/arm64 \
+  -t 491085384897.dkr.ecr.us-east-1.amazonaws.com/demos/seguros:1.0.1 \
+  --push .
 ```

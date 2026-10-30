@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import re
 import yaml
-from preflight import check_admin
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -55,9 +54,10 @@ def refs(value):
         if 'Fn::GetAtt' in item:
             yield item['Fn::GetAtt'][0]
         if 'Fn::Sub' in item:
-            assert isinstance(item['Fn::Sub'], str), 'Ampliar validador para Fn::Sub con mapa'
-            for name in re.findall(r'\$\{([^}]+)\}', item['Fn::Sub']):
-                if not name.startswith('!'):
+            value = item['Fn::Sub']
+            text, variables = (value, {}) if isinstance(value, str) else value
+            for name in re.findall(r'\$\{([^}]+)\}', text):
+                if not name.startswith('!') and name not in variables:
                     yield name.split('.')[0]
 
 
@@ -82,8 +82,137 @@ def resolve(value, parameters):
     return re.sub(r'\$\{([^}]+)\}', lambda m: parameters[m[1]], value['Fn::Sub'])
 
 
+def resources_of(template, kind):
+    return {k: v['Properties'] for k, v in template['Resources'].items() if v['Type'] == 'AWS::' + kind}
+
+
+def check_architecture(templates, manifests):
+    net, eks, services = templates
+    n, e, s = [t['Resources'] for t in templates]
+    expected = {f'{role}Subnet{z}': f'10.20.{num}.0/24'
+                for role, nums in [('General', [11, 12]), ('Terceros', [13, 14]), ('Onprem', [15, 16]), ('Db', [21, 22])]
+                for z, num in zip('AB', nums)}
+    subnets = resources_of(net, 'EC2::Subnet')
+    assert subnets.keys() == expected.keys()
+    assert n['VPC']['Properties']['CidrBlock'] == '10.20.0.0/16'
+    blocks = []
+    for key, value in subnets.items():
+        assert value['CidrBlock'] == expected[key]
+        assert value['AvailabilityZone'] == 'us-east-1' + key[-1].lower()
+        assert value['MapPublicIpOnLaunch'] is False
+        block = ipaddress.ip_network(value['CidrBlock'])
+        assert block.subnet_of(ipaddress.ip_network('10.20.0.0/16'))
+        assert not any(block.overlaps(other) for other in blocks)
+        blocks.append(block)
+    associations = resources_of(net, 'EC2::SubnetRouteTableAssociation')
+    assert len(resources_of(net, 'EC2::RouteTable')) == len(associations) == 8
+    assert {v['SubnetId']['Ref'] for v in associations.values()} == expected.keys()
+    assert len({v['RouteTableId']['Ref'] for v in associations.values()}) == 8
+    for a in associations.values():
+        assert a['RouteTableId']['Ref'] == a['SubnetId']['Ref'].replace('Subnet', 'RouteTable')
+    banned = {'EC2::Route', 'EC2::InternetGateway', 'EC2::NatGateway', 'EC2::VPNGateway',
+              'EC2::VPNConnection', 'EC2::TransitGateway', 'RDS::DBCluster',
+              'ApiGatewayV2::Api', 'ElasticLoadBalancingV2::LoadBalancer'}
+    assert not any(r['Type'].removeprefix('AWS::') in banned for t in templates for r in t['Resources'].values())
+    endpoints = resources_of(net, 'EC2::VPCEndpoint')
+    assert len(endpoints) == 11
+    assert {p['ServiceName']['Fn::Sub'].split('}.')[1] for p in endpoints.values()} == {
+        'ec2', 'ecr.api', 'ecr.dkr', 'eks', 'eks-auth', 'sqs', 'states', 'ssm', 'ssmmessages', 'secretsmanager', 's3'}
+    for name, p in endpoints.items():
+        assert p['PolicyDocument']['Statement']
+        if name != 'S3Endpoint':
+            assert p['PrivateDnsEnabled'] is True
+            assert p['SubnetIds'] == [{'Ref': 'GeneralSubnetA'}, {'Ref': 'GeneralSubnetB'}]
+    assert endpoints['S3Endpoint']['RouteTableIds'] == [
+        {'Ref': r + 'RouteTable' + z} for r in ['General', 'Terceros', 'Onprem'] for z in 'AB']
+    for sg in resources_of(net, 'EC2::SecurityGroup').values():
+        assert sg['SecurityGroupEgress'] == [{'IpProtocol': 'tcp', 'FromPort': 1, 'ToPort': 1, 'CidrIp': '127.0.0.1/32'}]
+    db_rules = [r for r in resources_of(net, 'EC2::SecurityGroupIngress').values()
+                if r['GroupId'] == {'Ref': 'DatabaseSecurityGroup'}]
+    assert len(db_rules) == 4
+    assert {r['SourceSecurityGroupId']['Ref'] for r in db_rules} == {
+        'GeneralNodesSecurityGroup', 'TercerosNodesSecurityGroup', 'OnpremNodesSecurityGroup', 'AdminSecurityGroup'}
+    assert all(r['FromPort'] == r['ToPort'] == 5432 for r in db_rules)
+    http = [r for r in resources_of(net, 'EC2::SecurityGroupIngress').values() if r['FromPort'] == 8080]
+    assert len(http) == 2 and all(r['SourceSecurityGroupId'] == {'Ref': 'GeneralNodesSecurityGroup'} for r in http)
+    cluster = e['Cluster']['Properties']
+    assert cluster['ResourcesVpcConfig']['EndpointPublicAccess'] is False
+    assert cluster['ResourcesVpcConfig']['EndpointPrivateAccess'] is True
+    assert cluster['AccessConfig']['BootstrapClusterCreatorAdminPermissions'] is False
+    groups = resources_of(eks, 'EKS::Nodegroup')
+    assert set(groups) == {'GeneralNodes', 'TercerosNodes', 'OnpremNodes'}
+    for role in ['General', 'Terceros', 'Onprem']:
+        group = groups[role + 'Nodes']
+        assert group['Labels'] == {'lab-role': role.lower()}
+        assert group['Subnets'] == [{'Fn::ImportValue': {'Fn::Sub': '${NetworkStackName}-' + role + 'Subnet' + z + 'Id'}} for z in 'AB']
+        assert group['ScalingConfig'] == {'MinSize': 1, 'DesiredSize': 1, 'MaxSize': 2}
+        launch = e[role + 'LaunchTemplate']['Properties']['LaunchTemplateData']
+        assert launch['SecurityGroupIds'] == [{'Fn::ImportValue': {'Fn::Sub': '${NetworkStackName}-' + role + 'NodesSecurityGroupId'}}]
+        assert launch['MetadataOptions']['HttpPutResponseHopLimit'] == 1
+        assert launch['MetadataOptions']['HttpTokens'] == 'required'
+        if role != 'General':
+            assert group['Taints'] == [{'Key': 'dedicated', 'Value': role.lower(), 'Effect': 'NO_SCHEDULE'}]
+    assert not any('CNI' in str(x) for x in e['NodeRole']['Properties']['ManagedPolicyArns'])
+    cni = e['VpcCni']['Properties']
+    assert cni['PodIdentityAssociations'][0]['ServiceAccount'] == 'aws-node'
+    assert eks['Parameters']['NetworkPolicyMode']['Default'] == 'strict'
+    assert '"enableNetworkPolicy":"true"' in cni['ConfigurationValues']['Fn::Sub']
+    db = s['Database']['Properties']
+    assert db['Engine'] == 'postgres' and db['DBInstanceClass'] == 'db.t4g.micro'
+    assert not db['MultiAZ'] and not db['PubliclyAccessible']
+    assert db['StorageEncrypted'] and db['ManageMasterUserPassword']
+    assert db['AllocatedStorage'] == '20' and s['Database']['DeletionPolicy'] == 'Snapshot'
+    assert s['DbParameters']['Properties']['Parameters']['rds.force_ssl'] == '1'
+    assert s['DbSubnetGroup']['Properties']['SubnetIds'] == [
+        {'Fn::ImportValue': {'Fn::Sub': '${NetworkStackName}-DbSubnet' + z + 'Id'}} for z in 'AB']
+    queue = s['WorkQueue']['Properties']
+    assert queue['RedrivePolicy'] == {'deadLetterTargetArn': {'Fn::GetAtt': ['DeadLetterQueue', 'Arn']}, 'maxReceiveCount': 5}
+    assert queue['MessageRetentionPeriod'] < s['DeadLetterQueue']['Properties']['MessageRetentionPeriod']
+    assert queue['SqsManagedSseEnabled'] and s['DeadLetterQueue']['Properties']['SqsManagedSseEnabled']
+    state = s['Dispatcher']['Properties']['Definition']['States']['Enqueue']
+    assert state['Resource']['Fn::Sub'].endswith('sqs:sendMessage') and state['End']
+    asl = json.loads((ROOT.parent / 'statemachine/docs-orchestrator.asl.json').read_text())
+    assert asl['States']['Enqueue'] == state | {'Resource': 'arn:aws:states:::sqs:sendMessage',
+        'Parameters': state['Parameters'] | {'QueueUrl': '${QUEUE_URL}'}}
+    deployments = [d for d in manifests if d['kind'] == 'Deployment']
+    assert len(deployments) == 3
+    assert {d['spec']['template']['spec']['containers'][0]['image'] for d in deployments} == {'${DEMO_IMAGE}'}
+    for d in deployments:
+        ns = d['metadata']['namespace']; role = ns.removeprefix('lab-')
+        pod = d['spec']['template']['spec']; container = pod['containers'][0]
+        assert pod['nodeSelector'] == {'lab-role': role} and pod['serviceAccountName'] == 'micro'
+        assert pod['automountServiceAccountToken'] is False
+        assert pod['securityContext']['runAsNonRoot'] and container['securityContext']['readOnlyRootFilesystem']
+        assert container['startupProbe']['httpGet']['path'] == '/actuator/health/liveness'
+        configs = next(m['data'] for m in manifests if m['kind'] == 'ConfigMap' and m['metadata']['namespace'] == ns)
+        assert 'sslmode=verify-full' in configs['DATABASE_URL'] and '/lab_' + role + '?' in configs['DATABASE_URL']
+        assert configs['SPRING_SQL_INIT_MODE'] == 'never' and configs['OTEL_SDK_DISABLED'] == 'true'
+        assert configs['S3_BUCKET'] == '${' + role.upper() + '_BUCKET}'
+        identity = s[role.capitalize() + 'Identity']['Properties']
+        assert identity['Namespace'] == ns and identity['ServiceAccount'] == 'micro'
+        iam = s[role.capitalize() + 'AppRole']['Properties']
+        conditions = iam['AssumeRolePolicyDocument']['Statement'][0]['Condition']['StringEquals']
+        assert conditions['aws:RequestTag/kubernetes-namespace'] == ns
+        assert conditions['aws:RequestTag/kubernetes-service-account'] == 'micro'
+        permissions = iam['Policies'][0]['PolicyDocument']['Statement']
+        assert all(p['Resource'] != '*' and p['Action'] != '*' for p in permissions)
+        actions = {a for p in permissions for a in (p['Action'] if isinstance(p['Action'], list) else [p['Action']])}
+        assert ('states:StartExecution' in actions) == (role == 'general')
+        assert ('sqs:ReceiveMessage' in actions) == (role == 'terceros')
+        policies = {m['metadata']['name']: m['spec'] for m in manifests if m['kind'] == 'NetworkPolicy' and m['metadata']['namespace'] == ns}
+        assert policies['default-deny'] == {'podSelector': {}, 'policyTypes': ['Ingress', 'Egress']}
+        assert policies['micro-allowed']['policyTypes'] == ['Ingress', 'Egress']
+        ingress = policies['micro-allowed']['ingress']
+        if role == 'general': assert ingress == []
+        else:
+            assert ingress[0]['from'][0]['namespaceSelector']['matchLabels']['kubernetes.io/metadata.name'] == 'lab-general'
+        if role != 'general':
+            assert not any(p.get('port') == 8080 for rule in policies['micro-allowed']['egress'] for p in rule['ports'])
+    assert any(m['kind'] == 'NetworkPolicy' and m['metadata']['name'] == 'coredns-required' for m in manifests)
+
+
 def main():
-    names = ['demo-seguros-networking', 'demo-seguros-eks', 'demo-seguros-ingress', 'demo-seguros-api']
+    names = ['demo-seguros-networking', 'demo-seguros-eks', 'demo-seguros-services']
     templates, params, exports = {}, {}, {}
     for file, name in zip(sorted((ROOT / 'cloudformation').glob('*.yaml')), names, strict=True):
         template = yaml.load(file.read_text(), Loader)
@@ -95,8 +224,8 @@ def main():
         assert all(k in supplied or 'Default' in v for k, v in defined.items()), f'Parametro ausente en {file}'
         params[name] = {k: v['Default'] for k, v in defined.items() if 'Default' in v} | supplied | {'AWS::StackName': name}
         resources = template['Resources']
-        for ref in refs(template):
-            assert ref.startswith('AWS::') or ref in resources or ref in defined, f'Ref desconocida: {name}/{ref}'
+        for reference in refs(template):
+            assert reference.startswith('AWS::') or reference in resources or reference in defined, f'Ref desconocida: {name}/{reference}'
         graph = {}
         for key, resource in resources.items():
             deps = resource.get('DependsOn', [])
@@ -116,101 +245,43 @@ def main():
                 assert imported in exports, f'Import sin export: {imported}'
                 stack_graph[name].add(exports[imported])
     acyclic(stack_graph)
-    net = templates[names[0]]['Resources']
-    expected = {'PublicSubnetA': '10.20.0.0/24', 'PublicSubnetB': '10.20.1.0/24',
-                'EKSPrivateSubnetA': '10.20.16.0/20', 'EKSPrivateSubnetB': '10.20.32.0/20',
-                'DataSubnetA': '10.20.64.0/24', 'DataSubnetB': '10.20.65.0/24'}
-    subnets = {k: v['Properties'] for k, v in net.items() if v['Type'] == 'AWS::EC2::Subnet'}
-    assert subnets.keys() == expected.keys()
-    vpc = ipaddress.ip_network(net['VPC']['Properties']['CidrBlock'])
-    blocks = []
-    for key, cidr in expected.items():
-        subnet = subnets[key]
-        assert subnet['CidrBlock'] == cidr
-        assert subnet['AvailabilityZone'] == ('us-east-1a' if key.endswith('A') else 'us-east-1b')
-        assert subnet['MapPublicIpOnLaunch'] == key.startswith('Public')
-        block = ipaddress.ip_network(cidr)
-        assert block.subnet_of(vpc) and all(not block.overlaps(other) for other in blocks)
-        assert block.num_addresses - 5 == (4091 if 'EKS' in key else 251)
-        blocks.append(block)
-    associations = [r['Properties'] for r in net.values() if r['Type'] == 'AWS::EC2::SubnetRouteTableAssociation']
-    assert len(associations) == 6
-    assert {r['SubnetId']['Ref'] for r in associations} == expected.keys()
-    for association in associations:
-        subnet = association['SubnetId']['Ref']
-        table = ('PublicRouteTable' if subnet.startswith('Public') else
-                 ('EKSPrivateRouteTable' if subnet.startswith('EKS') else 'DataRouteTable') + subnet[-1])
-        assert association['RouteTableId'] == {'Ref': table}
-    routes = [r['Properties'] for r in net.values() if r['Type'] == 'AWS::EC2::Route']
-    assert routes == [{'RouteTableId': {'Ref': 'PublicRouteTable'}, 'DestinationCidrBlock': '0.0.0.0/0',
-                       'GatewayId': {'Ref': 'InternetGateway'}}]
-    assert not any(r['Type'] == 'AWS::EC2::NatGateway' for r in net.values())
-    endpoints = [r['Properties'] for r in net.values() if r['Type'] == 'AWS::EC2::VPCEndpoint']
-    assert len(endpoints) == 7
-    for endpoint in endpoints:
-        assert endpoint['PolicyDocument']['Statement']
-        if endpoint['VpcEndpointType'] == 'Interface':
-            assert endpoint['PrivateDnsEnabled'] is True
-            assert endpoint['SubnetIds'] == [{'Ref': 'EKSPrivateSubnetA'}, {'Ref': 'EKSPrivateSubnetB'}]
-            assert endpoint['SecurityGroupIds'] == [{'Ref': 'EndpointSecurityGroup'}]
-        else:
-            assert endpoint['RouteTableIds'] == [{'Ref': 'EKSPrivateRouteTableA'}, {'Ref': 'EKSPrivateRouteTableB'}]
-    eks = templates[names[1]]
-    for key in ['AdminPublicCidr', 'AdminPrincipalArn']:
-        assert 'Default' not in eks['Parameters'][key]
-    cidr_pattern = eks['Parameters']['AdminPublicCidr']['AllowedPattern']
-    assert re.fullmatch(cidr_pattern, '8.8.8.8/32')
-    assert not re.fullmatch(cidr_pattern, '0.0.0.0/0')
-    assert not re.fullmatch(cidr_pattern, '999.1.1.1/32')
-    valid = {'AdminPublicCidr': '8.8.8.8/32', 'AdminPrincipalArn': 'arn:aws:iam::123456789012:role/Admin'}
-    check_admin(valid)
-    for bad in ['0.0.0.0/0', '10.20.0.1/32', '8.8.8.8/24', '::1/128']:
+    manifests = []
+    for file in (ROOT / 'kubernetes').glob('*.yaml'):
+        manifests.extend(yaml.load_all(file.read_text(), Loader))
+    for file in (ROOT / 'parameters').glob('*.json'):
+        json.loads(file.read_text())
+    check_architecture(list(templates.values()), manifests)
+    # Regression probes: network/IAM isolation checks must reject unsafe changes.
+    from copy import deepcopy
+    mutations = [
+        (0, 'GeneralSubnetA', 'MapPublicIpOnLaunch', True),
+        (1, 'Cluster', 'ResourcesVpcConfig', {'EndpointPublicAccess': True}),
+        (2, 'Database', 'PubliclyAccessible', True),
+    ]
+    for index, resource, key, value in mutations:
+        changed = deepcopy(list(templates.values()))
+        changed[index]['Resources'][resource]['Properties'][key] = value
         try:
-            check_admin(valid | {'AdminPublicCidr': bad})
-        except ValueError:
+            check_architecture(changed, manifests)
+        except AssertionError:
             pass
         else:
-            raise AssertionError(f'CIDR inseguro aceptado: {bad}')
-    cluster = eks['Resources']['Cluster']['Properties']
-    # El export CSV de red no puede usarse literalmente como valor de un tag EKS.
-    connectivity = next(t['Value'] for t in cluster['Tags'] if t['Key'] == 'PrivateConnectivity')
-    assert 'Fn::Join' in connectivity, 'PrivateConnectivity debe convertir el CSV a caracteres permitidos por EKS'
-    separator, parts = connectivity['Fn::Join']
-    delimiter, imported = parts['Fn::Split']
-    assert imported == {'Fn::ImportValue': {'Fn::Sub': '${NetworkStackName}-PrivateConnectivityReady'}}
-    export_separator, endpoints = templates[names[0]]['Outputs']['PrivateConnectivityReady']['Value']['Fn::Join']
-    endpoint_ids = [f'vpce-{i:017x}' for i in range(len(endpoints))]
-    tag_value = separator.join(export_separator.join(endpoint_ids).split(delimiter))
-    assert len(tag_value) <= 256 and re.fullmatch(r'[A-Za-z0-9 _.:/=+@-]*', tag_value), 'Tag EKS invalido'
-    assert all(endpoint_id in tag_value for endpoint_id in endpoint_ids)
-    assert cluster['AccessConfig'] == {'AuthenticationMode': 'API', 'BootstrapClusterCreatorAdminPermissions': False}
-    assert cluster['ResourcesVpcConfig']['PublicAccessCidrs'] == [{'Ref': 'AdminPublicCidr'}]
-    assert cluster['ResourcesVpcConfig']['EndpointPrivateAccess'] is True
-    assert not ipaddress.ip_network(cluster['KubernetesNetworkConfig']['ServiceIpv4Cidr']).overlaps(vpc)
-    for key in ['NodesA', 'NodesB']:
-        node = eks['Resources'][key]['Properties']
-        assert node['AmiType'] == 'AL2023_x86_64_STANDARD'
-        assert node['Subnets'][0]['Fn::ImportValue']['Fn::Sub'].endswith(f'EKSPrivateSubnet{key[-1]}Id')
-    ingress = templates[names[2]]['Resources']
-    assert ingress['Nlb']['Properties']['Scheme'] == 'internal'
-    assert ingress['TargetGroup']['Properties']['TargetType'] == 'ip'
-    assert 'Targets' not in ingress['TargetGroup']['Properties']
-    policy = ingress['ControllerRole']['Properties']['Policies'][0]['PolicyDocument']['Statement']
-    assert policy[1]['Action'] == ['elasticloadbalancing:RegisterTargets', 'elasticloadbalancing:DeregisterTargets']
-    assert policy[1]['Resource'] == {'Ref': 'TargetGroup'}
-    assert templates[names[3]]['Resources']['Route']['Properties']['AuthorizationType'] == 'AWS_IAM'
-    demo = list(yaml.load_all((ROOT / 'kubernetes/demo.yaml').read_text(), Loader))
-    service = next(d for d in demo if d['kind'] == 'Service')
-    assert service['spec']['type'] == 'ClusterIP'
-    binding = yaml.load((ROOT / 'kubernetes/target-group-binding.yaml').read_text(), Loader)
-    assert binding['spec']['serviceRef'] == {'name': service['metadata']['name'], 'port': service['spec']['ports'][0]['port']}
-    assert 'networking' not in binding['spec']
-    values = yaml.load((ROOT / 'helm/controller-values.yaml').read_text(), Loader)
-    assert all(values[k] is False for k in ['enableShield', 'enableWaf', 'enableWafv2', 'enableBackendSecurityGroup'])
-    print(f'OK: {len(templates)} plantillas, {len(exports)} exports, referencias y dependencias sin ciclos.')
-    print('OK: seis CIDR exactos sin solapamientos, rutas, endpoints, acceso admin, IAM y contrato Service/TGB.')
-    print('OK: tag EKS PrivateConnectivity sin caracteres invalidos y con import de red conservado.')
-    print('No se consulto ni modifico AWS. Validar IP y ARN reales con preflight.py antes de desplegar.')
+            raise AssertionError(f'No se rechazo configuracion insegura: {resource}/{key}')
+    from render import render
+    fixture = {'DEMO_IMAGE': '123456789012.dkr.ecr.us-east-1.amazonaws.com/micro@sha256:' + 'a' * 64,
+               'DB_HOST': 'test.abc.us-east-1.rds.amazonaws.com',
+               'GENERAL_BUCKET': 'test-general', 'TERCEROS_BUCKET': 'test-terceros', 'ONPREM_BUCKET': 'test-onprem'}
+    assert '${' not in render(fixture)
+    try:
+        render(fixture | {'DEMO_IMAGE': 'nginx:latest'})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Renderer acepto imagen externa')
+    print(f'OK: {len(templates)} plantillas, {len(exports)} exports, referencias/imports y dependencias sin ciclos.')
+    print('OK: ocho subredes/tablas, tres NG, endpoints, aislamiento SG/IAM/NetworkPolicy y manifiestos.')
+    print('OK: RDS/SQS/Step Functions, misma imagen por rol, renderer y regresiones negativas.')
+    print('Solo validacion estatica local; placeholders obligatorios pendientes, sin consultar ni modificar AWS.')
 
 
 if __name__ == '__main__':

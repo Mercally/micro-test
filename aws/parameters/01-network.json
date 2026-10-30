@@ -1,3 +1,10 @@
 [
-  {"ParameterKey": "EKSClusterName", "ParameterValue": "demo-seguros"}
+  {
+    "ParameterKey": "EKSClusterName",
+    "ParameterValue": "demo-seguros"
+  },
+  {
+    "ParameterKey": "S3PrefixListId",
+    "ParameterValue": "REQUIRED_S3PrefixListId"
+  }
 ]

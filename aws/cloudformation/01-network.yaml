@@ -1,31 +1,15 @@
-AWSTemplateFormatVersion: "2010-09-09"
-Description: >-
-  demo-seguros: red en us-east-1, dos AZ, seis subredes y endpoints privados.
-  Sin NAT Gateway. Desplegar por completo antes de 02-eks.yaml.
-
-# Desplegar en us-east-1: las AZ se fijan expresamente en us-east-1a y us-east-1b.
-# Direccionamiento dentro de 10.20.0.0/16, sin solapamientos:
-#   Capa       us-east-1a       us-east-1b
-#   Publica    10.20.0.0/24     10.20.1.0/24
-#   EKS        10.20.16.0/20    10.20.32.0/20
-#   Datos      10.20.64.0/24    10.20.65.0/24
-# EKS tiene ruta local y gateway S3; datos solo local. Sin salida a Internet.
-# Separar tablas no bloquea trafico entre capas: eso corresponde a security groups
-# y, cuando aplique, NetworkPolicies en las siguientes plantillas.
-
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Laboratorio privado us-east-1: ocho subredes, ocho tablas y endpoints. Sin salida a Internet.'
 Parameters:
   EKSClusterName:
     Type: String
     Default: demo-seguros
-    MinLength: 1
-    MaxLength: 100
-    AllowedPattern: "[A-Za-z0-9][A-Za-z0-9_-]*"
-    ConstraintDescription: >-
-      Debe comenzar con una letra o numero y contener solo letras, numeros,
-      guiones o guiones bajos; maximo 100 caracteres.
-    Description: >-
-      Nombre del cluster EKS. 02-eks.yaml importa este nombre para evitar diferencias.
-
+    AllowedPattern: '[a-z][a-z0-9-]{2,29}'
+    Description: Prefijo estable para cluster, colas, state machine y buckets.
+  S3PrefixListId:
+    Type: String
+    AllowedPattern: pl-[a-f0-9]+
+    Description: ID real de la managed prefix list com.amazonaws.us-east-1.s3; consultar antes de crear.
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -33,224 +17,897 @@ Resources:
       CidrBlock: 10.20.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-vpc"
-
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-igw"
-
-  InternetGatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref VPC
-      InternetGatewayId: !Ref InternetGateway
-
-  PublicSubnetA:
+  GeneralSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: us-east-1a
-      CidrBlock: 10.20.0.0/24
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-public-us-east-1a"
-        - Key: Tier
-          Value: public
-        - Key: kubernetes.io/role/elb
-          Value: "1"
-        - Key: !Sub "kubernetes.io/cluster/${EKSClusterName}"
-          Value: shared
-
-  PublicSubnetB:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: us-east-1b
-      CidrBlock: 10.20.1.0/24
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-public-us-east-1b"
-        - Key: Tier
-          Value: public
-        - Key: kubernetes.io/role/elb
-          Value: "1"
-        - Key: !Sub "kubernetes.io/cluster/${EKSClusterName}"
-          Value: shared
-
-  EKSPrivateSubnetA:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: us-east-1a
-      CidrBlock: 10.20.16.0/20
-      MapPublicIpOnLaunch: false
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-eks-private-us-east-1a"
-        - Key: Tier
-          Value: eks-private
-        - Key: kubernetes.io/role/internal-elb
-          Value: "1"
-        - Key: !Sub "kubernetes.io/cluster/${EKSClusterName}"
-          Value: shared
-
-  EKSPrivateSubnetB:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: us-east-1b
-      CidrBlock: 10.20.32.0/20
-      MapPublicIpOnLaunch: false
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-eks-private-us-east-1b"
-        - Key: Tier
-          Value: eks-private
-        - Key: kubernetes.io/role/internal-elb
-          Value: "1"
-        - Key: !Sub "kubernetes.io/cluster/${EKSClusterName}"
-          Value: shared
-
-  # Sin tags Kubernetes: evita que el controlador descubra estas subredes para LB.
-  DataSubnetA:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: us-east-1a
-      CidrBlock: 10.20.64.0/24
-      MapPublicIpOnLaunch: false
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-data-us-east-1a"
-        - Key: Tier
-          Value: data
-
-  DataSubnetB:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      AvailabilityZone: us-east-1b
-      CidrBlock: 10.20.65.0/24
-      MapPublicIpOnLaunch: false
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-data-us-east-1b"
-        - Key: Tier
-          Value: data
-
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-public-rt"
-
-  PublicDefaultRoute:
-    Type: AWS::EC2::Route
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  PublicSubnetARouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnetA
-      RouteTableId: !Ref PublicRouteTable
-
-  PublicSubnetBRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnetB
-      RouteTableId: !Ref PublicRouteTable
-
-  # Una tabla EKS por AZ permite agregar NAT por AZ sin cambiar asociaciones.
-  EKSPrivateRouteTableA:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-eks-private-rt-us-east-1a"
-
-  EKSPrivateRouteTableB:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-eks-private-rt-us-east-1b"
-
-  EKSPrivateSubnetARouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref EKSPrivateSubnetA
-      RouteTableId: !Ref EKSPrivateRouteTableA
-
-  EKSPrivateSubnetBRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref EKSPrivateSubnetB
-      RouteTableId: !Ref EKSPrivateRouteTableB
-
-  DataRouteTableA:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-data-rt-us-east-1a"
-
-  DataRouteTableB:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-data-rt-us-east-1b"
-
-  DataSubnetARouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref DataSubnetA
-      RouteTableId: !Ref DataRouteTableA
-
-  DataSubnetBRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref DataSubnetB
-      RouteTableId: !Ref DataRouteTableB
-
-  # Politicas de endpoint limitan transporte; no sustituyen permisos IAM.
-  EndpointSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: HTTPS desde subredes EKS a endpoints privados
       VpcId:
         Ref: VPC
-      SecurityGroupIngress:
-      - IpProtocol: tcp
-        FromPort: 443
-        ToPort: 443
-        CidrIp: 10.20.16.0/20
-      - IpProtocol: tcp
-        FromPort: 443
-        ToPort: 443
-        CidrIp: 10.20.32.0/20
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.20.11.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-general-a
+  GeneralRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-GeneralRouteTableA
+  GeneralSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: GeneralSubnetA
+      RouteTableId:
+        Ref: GeneralRouteTableA
+  GeneralSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.20.12.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-general-b
+  GeneralRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-GeneralRouteTableB
+  GeneralSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: GeneralSubnetB
+      RouteTableId:
+        Ref: GeneralRouteTableB
+  TercerosSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.20.13.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-terceros-a
+  TercerosRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-TercerosRouteTableA
+  TercerosSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: TercerosSubnetA
+      RouteTableId:
+        Ref: TercerosRouteTableA
+  TercerosSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.20.14.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-terceros-b
+  TercerosRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-TercerosRouteTableB
+  TercerosSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: TercerosSubnetB
+      RouteTableId:
+        Ref: TercerosRouteTableB
+  OnpremSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.20.15.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-onprem-a
+  OnpremRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-OnpremRouteTableA
+  OnpremSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: OnpremSubnetA
+      RouteTableId:
+        Ref: OnpremRouteTableA
+  OnpremSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.20.16.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-onprem-b
+  OnpremRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-OnpremRouteTableB
+  OnpremSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: OnpremSubnetB
+      RouteTableId:
+        Ref: OnpremRouteTableB
+  DbSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.20.21.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-db-a
+  DbRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DbRouteTableA
+  DbSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: DbSubnetA
+      RouteTableId:
+        Ref: DbRouteTableA
+  DbSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.20.22.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-db-b
+  DbRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DbRouteTableB
+  DbSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: DbSubnetB
+      RouteTableId:
+        Ref: DbRouteTableB
+  ControlPlaneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: ControlPlane - reglas explicitas del laboratorio
       SecurityGroupEgress:
       - IpProtocol: tcp
-        FromPort: 443
-        ToPort: 443
-        CidrIp: 10.20.0.0/16
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+  EndpointsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: Endpoints - reglas explicitas del laboratorio
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+  AdminSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: Admin - reglas explicitas del laboratorio
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: Database - reglas explicitas del laboratorio
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+  GeneralNodesSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: GeneralNodes - reglas explicitas del laboratorio
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+  TercerosNodesSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: TercerosNodes - reglas explicitas del laboratorio
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+  OnpremNodesSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: OnpremNodes - reglas explicitas del laboratorio
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+  GeneralApiIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      SourceSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  GeneralApiEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  GeneralKubeletIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 10250
+      ToPort: 10250
+  GeneralKubeletEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 10250
+      ToPort: 10250
+  GeneralControlHttpsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  GeneralControlHttpsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  GeneralAwsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: EndpointsSecurityGroup
+      SourceSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  GeneralAwsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: EndpointsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  GeneralDbIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: DatabaseSecurityGroup
+      SourceSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  GeneralDbEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  GeneralDnstcpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+  GeneralDnstcpEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+  GeneralDnsudpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: udp
+      FromPort: 53
+      ToPort: 53
+  GeneralDnsudpEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: udp
+      FromPort: 53
+      ToPort: 53
+  GeneralS3Egress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      DestinationPrefixListId:
+        Ref: S3PrefixListId
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  TercerosApiIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      SourceSecurityGroupId:
+        Ref: TercerosNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  TercerosApiEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: TercerosNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  TercerosKubeletIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: TercerosNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 10250
+      ToPort: 10250
+  TercerosKubeletEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: TercerosNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 10250
+      ToPort: 10250
+  TercerosControlHttpsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: TercerosNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  TercerosControlHttpsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: TercerosNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  TercerosAwsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: EndpointsSecurityGroup
+      SourceSecurityGroupId:
+        Ref: TercerosNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  TercerosAwsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: TercerosNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: EndpointsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  TercerosDbIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: DatabaseSecurityGroup
+      SourceSecurityGroupId:
+        Ref: TercerosNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  TercerosDbEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: TercerosNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  TercerosDnstcpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: TercerosNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+  TercerosDnstcpEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: TercerosNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+  TercerosDnsudpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: TercerosNodesSecurityGroup
+      IpProtocol: udp
+      FromPort: 53
+      ToPort: 53
+  TercerosDnsudpEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: TercerosNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: udp
+      FromPort: 53
+      ToPort: 53
+  TercerosS3Egress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: TercerosNodesSecurityGroup
+      DestinationPrefixListId:
+        Ref: S3PrefixListId
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  OnpremApiIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      SourceSecurityGroupId:
+        Ref: OnpremNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  OnpremApiEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: OnpremNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  OnpremKubeletIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: OnpremNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 10250
+      ToPort: 10250
+  OnpremKubeletEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: OnpremNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 10250
+      ToPort: 10250
+  OnpremControlHttpsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: OnpremNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  OnpremControlHttpsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: OnpremNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  OnpremAwsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: EndpointsSecurityGroup
+      SourceSecurityGroupId:
+        Ref: OnpremNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  OnpremAwsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: OnpremNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: EndpointsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  OnpremDbIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: DatabaseSecurityGroup
+      SourceSecurityGroupId:
+        Ref: OnpremNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  OnpremDbEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: OnpremNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  OnpremDnstcpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: OnpremNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+  OnpremDnstcpEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: OnpremNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+  OnpremDnsudpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: OnpremNodesSecurityGroup
+      IpProtocol: udp
+      FromPort: 53
+      ToPort: 53
+  OnpremDnsudpEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: OnpremNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: udp
+      FromPort: 53
+      ToPort: 53
+  OnpremS3Egress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: OnpremNodesSecurityGroup
+      DestinationPrefixListId:
+        Ref: S3PrefixListId
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  GeneralToTercerosIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: TercerosNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+  GeneralToTercerosEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: TercerosNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+  GeneralToOnpremIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: OnpremNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+  GeneralToOnpremEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: OnpremNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+  AdminApiIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      SourceSecurityGroupId:
+        Ref: AdminSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  AdminApiEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: AdminSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  AdminEndpointsIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: EndpointsSecurityGroup
+      SourceSecurityGroupId:
+        Ref: AdminSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  AdminEndpointsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: AdminSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: EndpointsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+  AdminDbIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: DatabaseSecurityGroup
+      SourceSecurityGroupId:
+        Ref: AdminSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  AdminDbEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: AdminSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  ControlDnstcpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+  ControlDnstcpEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+  ControlDnsudpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: GeneralNodesSecurityGroup
+      SourceSecurityGroupId:
+        Ref: ControlPlaneSecurityGroup
+      IpProtocol: udp
+      FromPort: 53
+      ToPort: 53
+  ControlDnsudpEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: ControlPlaneSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: GeneralNodesSecurityGroup
+      IpProtocol: udp
+      FromPort: 53
+      ToPort: 53
   EC2Endpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -261,25 +918,31 @@ Resources:
         Fn::Sub: com.amazonaws.${AWS::Region}.ec2
       PrivateDnsEnabled: true
       SubnetIds:
-      - Ref: EKSPrivateSubnetA
-      - Ref: EKSPrivateSubnetB
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
       SecurityGroupIds:
-      - Ref: EndpointSecurityGroup
+      - Ref: EndpointsSecurityGroup
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
-          Principal: '*'
           Action:
-          - ec2:Describe*
+          - ec2:DescribeInstances
+          - ec2:DescribeInstanceTypes
+          - ec2:DescribeTags
+          - ec2:DescribeNetworkInterfaces
+          - ec2:DescribeSubnets
+          - ec2:DescribeSecurityGroups
           - ec2:CreateNetworkInterface
           - ec2:AttachNetworkInterface
+          - ec2:DetachNetworkInterface
           - ec2:DeleteNetworkInterface
           - ec2:ModifyNetworkInterfaceAttribute
           - ec2:AssignPrivateIpAddresses
           - ec2:UnassignPrivateIpAddresses
           - ec2:CreateTags
           Resource: '*'
+          Principal: '*'
           Condition:
             StringEquals:
               aws:PrincipalAccount:
@@ -294,21 +957,21 @@ Resources:
         Fn::Sub: com.amazonaws.${AWS::Region}.ecr.api
       PrivateDnsEnabled: true
       SubnetIds:
-      - Ref: EKSPrivateSubnetA
-      - Ref: EKSPrivateSubnetB
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
       SecurityGroupIds:
-      - Ref: EndpointSecurityGroup
+      - Ref: EndpointsSecurityGroup
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
-          Principal: '*'
           Action:
           - ecr:GetAuthorizationToken
           - ecr:BatchCheckLayerAvailability
           - ecr:GetDownloadUrlForLayer
           - ecr:BatchGetImage
           Resource: '*'
+          Principal: '*'
           Condition:
             StringEquals:
               aws:PrincipalAccount:
@@ -323,21 +986,21 @@ Resources:
         Fn::Sub: com.amazonaws.${AWS::Region}.ecr.dkr
       PrivateDnsEnabled: true
       SubnetIds:
-      - Ref: EKSPrivateSubnetA
-      - Ref: EKSPrivateSubnetB
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
       SecurityGroupIds:
-      - Ref: EndpointSecurityGroup
+      - Ref: EndpointsSecurityGroup
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
-          Principal: '*'
           Action:
           - ecr:GetAuthorizationToken
           - ecr:BatchCheckLayerAvailability
           - ecr:GetDownloadUrlForLayer
           - ecr:BatchGetImage
           Resource: '*'
+          Principal: '*'
           Condition:
             StringEquals:
               aws:PrincipalAccount:
@@ -352,18 +1015,19 @@ Resources:
         Fn::Sub: com.amazonaws.${AWS::Region}.eks
       PrivateDnsEnabled: true
       SubnetIds:
-      - Ref: EKSPrivateSubnetA
-      - Ref: EKSPrivateSubnetB
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
       SecurityGroupIds:
-      - Ref: EndpointSecurityGroup
+      - Ref: EndpointsSecurityGroup
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
-          Principal: '*'
           Action:
           - eks:DescribeCluster
-          Resource: '*'
+          Resource:
+            Fn::Sub: arn:${AWS::Partition}:eks:${AWS::Region}:${AWS::AccountId}:cluster/${EKSClusterName}
+          Principal: '*'
           Condition:
             StringEquals:
               aws:PrincipalAccount:
@@ -378,46 +1042,171 @@ Resources:
         Fn::Sub: com.amazonaws.${AWS::Region}.eks-auth
       PrivateDnsEnabled: true
       SubnetIds:
-      - Ref: EKSPrivateSubnetA
-      - Ref: EKSPrivateSubnetB
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
       SecurityGroupIds:
-      - Ref: EndpointSecurityGroup
+      - Ref: EndpointsSecurityGroup
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
-          Principal: '*'
           Action:
           - eks-auth:AssumeRoleForPodIdentity
           Resource: '*'
+          Principal: '*'
           Condition:
             StringEquals:
               aws:PrincipalAccount:
                 Ref: AWS::AccountId
-  ELBEndpoint:
+  SQSEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
       VpcId:
         Ref: VPC
       VpcEndpointType: Interface
       ServiceName:
-        Fn::Sub: com.amazonaws.${AWS::Region}.elasticloadbalancing
+        Fn::Sub: com.amazonaws.${AWS::Region}.sqs
       PrivateDnsEnabled: true
       SubnetIds:
-      - Ref: EKSPrivateSubnetA
-      - Ref: EKSPrivateSubnetB
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
       SecurityGroupIds:
-      - Ref: EndpointSecurityGroup
+      - Ref: EndpointsSecurityGroup
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
-          Principal: '*'
           Action:
-          - elasticloadbalancing:Describe*
-          - elasticloadbalancing:RegisterTargets
-          - elasticloadbalancing:DeregisterTargets
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:ChangeMessageVisibility
+          - sqs:GetQueueAttributes
+          Resource:
+            Fn::Sub: arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:${EKSClusterName}-work
+          Principal: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  StatesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.states
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointsSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - states:StartExecution
+          Resource:
+            Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${EKSClusterName}-dispatch
+          Principal: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ssm
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointsSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - ssm:UpdateInstanceInformation
+          - ssm:ListInstanceAssociations
+          - ssm:DescribeInstanceProperties
+          - ssm:DescribeDocument
+          - ssm:GetDocument
+          - ssm:GetManifest
+          - ssm:GetParameter
+          - ssm:GetParameters
+          - ssm:ListAssociations
+          - ssm:PutInventory
+          - ssm:PutComplianceItems
+          - ssm:PutConfigurePackageResult
+          - ssm:UpdateAssociationStatus
+          - ssm:UpdateInstanceAssociationStatus
           Resource: '*'
+          Principal: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ssmmessages
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointsSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - ssmmessages:CreateControlChannel
+          - ssmmessages:CreateDataChannel
+          - ssmmessages:OpenControlChannel
+          - ssmmessages:OpenDataChannel
+          Resource: '*'
+          Principal: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: VPC
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.secretsmanager
+      PrivateDnsEnabled: true
+      SubnetIds:
+      - Ref: GeneralSubnetA
+      - Ref: GeneralSubnetB
+      SecurityGroupIds:
+      - Ref: EndpointsSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - secretsmanager:GetSecretValue
+          - secretsmanager:DescribeSecret
+          Resource:
+            Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*
+          Principal: '*'
           Condition:
             StringEquals:
               aws:PrincipalAccount:
@@ -431,128 +1220,228 @@ Resources:
       ServiceName:
         Fn::Sub: com.amazonaws.${AWS::Region}.s3
       RouteTableIds:
-      - Ref: EKSPrivateRouteTableA
-      - Ref: EKSPrivateRouteTableB
+      - Ref: GeneralRouteTableA
+      - Ref: GeneralRouteTableB
+      - Ref: TercerosRouteTableA
+      - Ref: TercerosRouteTableB
+      - Ref: OnpremRouteTableA
+      - Ref: OnpremRouteTableB
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
-          Principal: '*'
           Action: s3:GetObject
           Resource:
             Fn::Sub: arn:${AWS::Partition}:s3:::prod-${AWS::Region}-starport-layer-bucket/*
-
-# Los exports llevan el nombre del stack de red como prefijo.
-# Las listas se exportan como CSV; consumir con Fn::Split y Fn::ImportValue.
+          Principal: '*'
+        - Effect: Allow
+          Action: s3:ListBucket
+          Resource:
+          - Fn::Sub: arn:${AWS::Partition}:s3:::${AWS::AccountId}-${EKSClusterName}-general
+          - Fn::Sub: arn:${AWS::Partition}:s3:::${AWS::AccountId}-${EKSClusterName}-terceros
+          - Fn::Sub: arn:${AWS::Partition}:s3:::${AWS::AccountId}-${EKSClusterName}-onprem
+          Principal: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
+        - Effect: Allow
+          Action:
+          - s3:GetObject
+          - s3:PutObject
+          Resource:
+          - Fn::Sub: arn:${AWS::Partition}:s3:::${AWS::AccountId}-${EKSClusterName}-general/*
+          - Fn::Sub: arn:${AWS::Partition}:s3:::${AWS::AccountId}-${EKSClusterName}-terceros/*
+          - Fn::Sub: arn:${AWS::Partition}:s3:::${AWS::AccountId}-${EKSClusterName}-onprem/*
+          Principal: '*'
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount:
+                Ref: AWS::AccountId
 Outputs:
+  GeneralSubnetAId:
+    Value:
+      Ref: GeneralSubnetA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralSubnetAId
+  GeneralRouteTableAId:
+    Value:
+      Ref: GeneralRouteTableA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralRouteTableAId
+  GeneralSubnetBId:
+    Value:
+      Ref: GeneralSubnetB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralSubnetBId
+  GeneralRouteTableBId:
+    Value:
+      Ref: GeneralRouteTableB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralRouteTableBId
+  TercerosSubnetAId:
+    Value:
+      Ref: TercerosSubnetA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosSubnetAId
+  TercerosRouteTableAId:
+    Value:
+      Ref: TercerosRouteTableA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosRouteTableAId
+  TercerosSubnetBId:
+    Value:
+      Ref: TercerosSubnetB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosSubnetBId
+  TercerosRouteTableBId:
+    Value:
+      Ref: TercerosRouteTableB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosRouteTableBId
+  OnpremSubnetAId:
+    Value:
+      Ref: OnpremSubnetA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremSubnetAId
+  OnpremRouteTableAId:
+    Value:
+      Ref: OnpremRouteTableA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremRouteTableAId
+  OnpremSubnetBId:
+    Value:
+      Ref: OnpremSubnetB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremSubnetBId
+  OnpremRouteTableBId:
+    Value:
+      Ref: OnpremRouteTableB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremRouteTableBId
+  DbSubnetAId:
+    Value:
+      Ref: DbSubnetA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DbSubnetAId
+  DbRouteTableAId:
+    Value:
+      Ref: DbRouteTableA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DbRouteTableAId
+  DbSubnetBId:
+    Value:
+      Ref: DbSubnetB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DbSubnetBId
+  DbRouteTableBId:
+    Value:
+      Ref: DbRouteTableB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DbRouteTableBId
+  ControlPlaneSecurityGroupId:
+    Value:
+      Ref: ControlPlaneSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-ControlPlaneSecurityGroupId
+  EndpointsSecurityGroupId:
+    Value:
+      Ref: EndpointsSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-EndpointsSecurityGroupId
+  AdminSecurityGroupId:
+    Value:
+      Ref: AdminSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-AdminSecurityGroupId
+  DatabaseSecurityGroupId:
+    Value:
+      Ref: DatabaseSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabaseSecurityGroupId
+  GeneralNodesSecurityGroupId:
+    Value:
+      Ref: GeneralNodesSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralNodesSecurityGroupId
+  TercerosNodesSecurityGroupId:
+    Value:
+      Ref: TercerosNodesSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosNodesSecurityGroupId
+  OnpremNodesSecurityGroupId:
+    Value:
+      Ref: OnpremNodesSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremNodesSecurityGroupId
   VpcId:
-    Description: ID de la VPC.
-    Value: !Ref VPC
+    Value:
+      Ref: VPC
     Export:
-      Name: !Sub "${AWS::StackName}-VpcId"
-
-  VpcCidr:
-    Description: Bloque CIDR de la VPC.
-    Value: !GetAtt VPC.CidrBlock
-    Export:
-      Name: !Sub "${AWS::StackName}-VpcCidr"
-
-  InternetGatewayId:
-    Description: ID del Internet Gateway.
-    Value: !Ref InternetGateway
-    Export:
-      Name: !Sub "${AWS::StackName}-InternetGatewayId"
-
-  PublicSubnetAId:
-    Description: Subred publica en us-east-1a.
-    Value: !Ref PublicSubnetA
-    Export:
-      Name: !Sub "${AWS::StackName}-PublicSubnetAId"
-
-  PublicSubnetBId:
-    Description: Subred publica en us-east-1b.
-    Value: !Ref PublicSubnetB
-    Export:
-      Name: !Sub "${AWS::StackName}-PublicSubnetBId"
-
-  EKSPrivateSubnetAId:
-    Description: Subred privada EKS en us-east-1a.
-    Value: !Ref EKSPrivateSubnetA
-    Export:
-      Name: !Sub "${AWS::StackName}-EKSPrivateSubnetAId"
-
-  EKSPrivateSubnetBId:
-    Description: Subred privada EKS en us-east-1b.
-    Value: !Ref EKSPrivateSubnetB
-    Export:
-      Name: !Sub "${AWS::StackName}-EKSPrivateSubnetBId"
-
-  DataSubnetAId:
-    Description: Subred privada de datos en us-east-1a.
-    Value: !Ref DataSubnetA
-    Export:
-      Name: !Sub "${AWS::StackName}-DataSubnetAId"
-
-  DataSubnetBId:
-    Description: Subred privada de datos en us-east-1b.
-    Value: !Ref DataSubnetB
-    Export:
-      Name: !Sub "${AWS::StackName}-DataSubnetBId"
-
-  PublicSubnetIds:
-    Description: IDs publicos separados por coma, orden AZ a y b.
-    Value: !Join [",", [!Ref PublicSubnetA, !Ref PublicSubnetB]]
-    Export:
-      Name: !Sub "${AWS::StackName}-PublicSubnetIds"
-
-  EKSPrivateSubnetIds:
-    Description: IDs privados EKS separados por coma, orden AZ a y b.
-    Value: !Join [",", [!Ref EKSPrivateSubnetA, !Ref EKSPrivateSubnetB]]
-    Export:
-      Name: !Sub "${AWS::StackName}-EKSPrivateSubnetIds"
-
-  DataSubnetIds:
-    Description: IDs de datos separados por coma, orden AZ a y b.
-    Value: !Join [",", [!Ref DataSubnetA, !Ref DataSubnetB]]
-    Export:
-      Name: !Sub "${AWS::StackName}-DataSubnetIds"
-
-  PublicRouteTableId:
-    Description: Tabla publica compartida por ambas AZ, con ruta al IGW.
-    Value: !Ref PublicRouteTable
-    Export:
-      Name: !Sub "${AWS::StackName}-PublicRouteTableId"
-
-  EKSPrivateRouteTableAId:
-    Description: Tabla EKS us-east-1a; sin ruta por defecto.
-    Value: !Ref EKSPrivateRouteTableA
-    Export:
-      Name: !Sub "${AWS::StackName}-EKSPrivateRouteTableAId"
-
-  EKSPrivateRouteTableBId:
-    Description: Tabla EKS us-east-1b; sin ruta por defecto.
-    Value: !Ref EKSPrivateRouteTableB
-    Export:
-      Name: !Sub "${AWS::StackName}-EKSPrivateRouteTableBId"
-
-  DataRouteTableAId:
-    Description: Tabla de datos us-east-1a; sin ruta por defecto.
-    Value: !Ref DataRouteTableA
-    Export:
-      Name: !Sub "${AWS::StackName}-DataRouteTableAId"
-
-  DataRouteTableBId:
-    Description: Tabla de datos us-east-1b; sin ruta por defecto.
-    Value: !Ref DataRouteTableB
-    Export:
-      Name: !Sub "${AWS::StackName}-DataRouteTableBId"
-
+      Name:
+        Fn::Sub: ${AWS::StackName}-VpcId
   EKSClusterName:
-    Value: !Ref EKSClusterName
+    Value:
+      Ref: EKSClusterName
     Export:
-      Name: !Sub '${AWS::StackName}-EKSClusterName'
+      Name:
+        Fn::Sub: ${AWS::StackName}-EKSClusterName
+  S3EndpointId:
+    Value:
+      Ref: S3Endpoint
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-S3EndpointId
+  SqsEndpointId:
+    Value:
+      Ref: SQSEndpoint
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-SqsEndpointId
+  StatesEndpointId:
+    Value:
+      Ref: StatesEndpoint
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-StatesEndpointId
   PrivateConnectivityReady:
-    Description: Importar establece dependencia con todos los endpoints antes de EKS.
-    Value: !Join [',', [!Ref EC2Endpoint, !Ref ECRApiEndpoint, !Ref ECRDkrEndpoint, !Ref EKSEndpoint, !Ref EKSAuthEndpoint, !Ref ELBEndpoint, !Ref S3Endpoint]]
+    Value:
+      Fn::Join:
+      - ' '
+      - - Ref: EC2Endpoint
+        - Ref: ECRApiEndpoint
+        - Ref: ECRDkrEndpoint
+        - Ref: EKSEndpoint
+        - Ref: EKSAuthEndpoint
+        - Ref: SQSEndpoint
+        - Ref: StatesEndpoint
+        - Ref: SSMEndpoint
+        - Ref: SSMMessagesEndpoint
+        - Ref: SecretsManagerEndpoint
+        - Ref: S3Endpoint
     Export:
-      Name: !Sub '${AWS::StackName}-PrivateConnectivityReady'
+      Name:
+        Fn::Sub: ${AWS::StackName}-PrivateConnectivityReady

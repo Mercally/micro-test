@@ -1,4 +1,0 @@
-[
-  {"ParameterKey": "NetworkStackName", "ParameterValue": "demo-seguros-networking"},
-  {"ParameterKey": "IngressStackName", "ParameterValue": "demo-seguros-ingress"}
-]

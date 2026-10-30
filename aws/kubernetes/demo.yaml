@@ -1,97 +1,423 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: demo-seguros
+  name: lab-general
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: micro
+  namespace: lab-general
+automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: demo-nginx
-  namespace: demo-seguros
+  name: micro-config
+  namespace: lab-general
 data:
-  nginx.conf: |
-    worker_processes auto;
-    pid /tmp/nginx.pid;
-    events { worker_connections 128; }
-    http {
-      access_log /dev/stdout;
-      error_log /dev/stderr warn;
-      client_body_temp_path /tmp/client_temp;
-      proxy_temp_path /tmp/proxy_temp;
-      fastcgi_temp_path /tmp/fastcgi_temp;
-      uwsgi_temp_path /tmp/uwsgi_temp;
-      scgi_temp_path /tmp/scgi_temp;
-      server {
-        listen 8080;
-        location = /healthz { return 200 "ok\n"; }
-        location / {
-          default_type application/json;
-          return 200 '{"proyecto":"demo-seguros","estado":"ok"}\n';
-        }
-      }
-    }
+  SPRING_APPLICATION_NAME: docs-simulator-general
+  AWS_REGION: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_EC2_METADATA_DISABLED: 'true'
+  S3_BUCKET: ${GENERAL_BUCKET}
+  DATABASE_URL: jdbc:postgresql://${DB_HOST}:5432/lab_general?sslmode=verify-full&sslrootcert=/etc/rds-ca/us-east-1-bundle.pem
+  SPRING_SQL_INIT_MODE: never
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: '3'
+  SIMULATOR_FAILURE_PROBABILITY: '0'
+  SIMULATOR_FAILURES_BEFORE_SUCCESS: '0'
+  OTEL_SDK_DISABLED: 'true'
+  JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: demo
-  namespace: demo-seguros
+  name: micro
+  namespace: lab-general
 spec:
-  replicas: 2
+  replicas: 1
   selector:
-    matchLabels: {app: demo}
+    matchLabels:
+      app: micro
   template:
     metadata:
-      labels: {app: demo}
+      labels:
+        app: micro
+        lab-role: general
     spec:
+      serviceAccountName: micro
       automountServiceAccountToken: false
+      nodeSelector:
+        lab-role: general
       securityContext:
         runAsNonRoot: true
-        runAsUser: 101
-        runAsGroup: 101
-        fsGroup: 101
-        seccompProfile: {type: RuntimeDefault}
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: DoNotSchedule
-          labelSelector:
-            matchLabels: {app: demo}
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
-        - name: nginx
-          image: ${DEMO_IMAGE}
-          command: [nginx]
-          args: ['-g', 'daemon off;']
-          ports: [{containerPort: 8080, name: http}]
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: {drop: [ALL]}
-          resources:
-            requests: {cpu: 50m, memory: 32Mi}
-            limits: {cpu: 250m, memory: 64Mi}
-          readinessProbe:
-            httpGet: {path: /healthz, port: http}
-            periodSeconds: 5
-          livenessProbe:
-            httpGet: {path: /healthz, port: http}
-            initialDelaySeconds: 10
-          volumeMounts:
-            - {name: config, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf, readOnly: true}
-            - {name: tmp, mountPath: /tmp}
-      volumes:
-        - name: config
-          configMap: {name: demo-nginx}
+      - name: app
+        image: ${DEMO_IMAGE}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        envFrom:
+        - configMapRef:
+            name: micro-config
+        env:
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: username
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: password
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            memory: 1Gi
+        startupProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: http
+          periodSeconds: 5
+          failureThreshold: 60
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: http
+          periodSeconds: 20
+        volumeMounts:
         - name: tmp
-          emptyDir: {}
+          mountPath: /tmp
+        - name: rds-ca
+          mountPath: /etc/rds-ca
+          readOnly: true
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: rds-ca
+        configMap:
+          name: rds-ca
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: demo
-  namespace: demo-seguros
+  name: micro
+  namespace: lab-general
 spec:
   type: ClusterIP
-  selector: {app: demo}
+  selector:
+    app: micro
   ports:
-    - {name: http, port: 80, targetPort: http}
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-terceros
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: micro
+  namespace: lab-terceros
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: micro-config
+  namespace: lab-terceros
+data:
+  SPRING_APPLICATION_NAME: docs-simulator-terceros
+  AWS_REGION: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_EC2_METADATA_DISABLED: 'true'
+  S3_BUCKET: ${TERCEROS_BUCKET}
+  DATABASE_URL: jdbc:postgresql://${DB_HOST}:5432/lab_terceros?sslmode=verify-full&sslrootcert=/etc/rds-ca/us-east-1-bundle.pem
+  SPRING_SQL_INIT_MODE: never
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: '3'
+  SIMULATOR_FAILURE_PROBABILITY: '0'
+  SIMULATOR_FAILURES_BEFORE_SUCCESS: '0'
+  OTEL_SDK_DISABLED: 'true'
+  JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: micro
+  namespace: lab-terceros
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: micro
+  template:
+    metadata:
+      labels:
+        app: micro
+        lab-role: terceros
+    spec:
+      serviceAccountName: micro
+      automountServiceAccountToken: false
+      nodeSelector:
+        lab-role: terceros
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: app
+        image: ${DEMO_IMAGE}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        envFrom:
+        - configMapRef:
+            name: micro-config
+        env:
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: username
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: password
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            memory: 1Gi
+        startupProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: http
+          periodSeconds: 5
+          failureThreshold: 60
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: http
+          periodSeconds: 20
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: rds-ca
+          mountPath: /etc/rds-ca
+          readOnly: true
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: rds-ca
+        configMap:
+          name: rds-ca
+      tolerations:
+      - key: dedicated
+        operator: Equal
+        value: terceros
+        effect: NoSchedule
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: micro
+  namespace: lab-terceros
+spec:
+  type: ClusterIP
+  selector:
+    app: micro
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-onprem
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: micro
+  namespace: lab-onprem
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: micro-config
+  namespace: lab-onprem
+data:
+  SPRING_APPLICATION_NAME: docs-simulator-onprem
+  AWS_REGION: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_EC2_METADATA_DISABLED: 'true'
+  S3_BUCKET: ${ONPREM_BUCKET}
+  DATABASE_URL: jdbc:postgresql://${DB_HOST}:5432/lab_onprem?sslmode=verify-full&sslrootcert=/etc/rds-ca/us-east-1-bundle.pem
+  SPRING_SQL_INIT_MODE: never
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: '3'
+  SIMULATOR_FAILURE_PROBABILITY: '0'
+  SIMULATOR_FAILURES_BEFORE_SUCCESS: '0'
+  OTEL_SDK_DISABLED: 'true'
+  JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: micro
+  namespace: lab-onprem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: micro
+  template:
+    metadata:
+      labels:
+        app: micro
+        lab-role: onprem
+    spec:
+      serviceAccountName: micro
+      automountServiceAccountToken: false
+      nodeSelector:
+        lab-role: onprem
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: app
+        image: ${DEMO_IMAGE}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        envFrom:
+        - configMapRef:
+            name: micro-config
+        env:
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: username
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: password
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            memory: 1Gi
+        startupProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: http
+          periodSeconds: 5
+          failureThreshold: 60
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: http
+          periodSeconds: 20
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: rds-ca
+          mountPath: /etc/rds-ca
+          readOnly: true
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: rds-ca
+        configMap:
+          name: rds-ca
+      tolerations:
+      - key: dedicated
+        operator: Equal
+        value: onprem
+        effect: NoSchedule
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: micro
+  namespace: lab-onprem
+spec:
+  type: ClusterIP
+  selector:
+    app: micro
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

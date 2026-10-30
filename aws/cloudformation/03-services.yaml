@@ -1,0 +1,642 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: RDS PostgreSQL privado, buckets por rol, SQS/DLQ, Step Functions y permisos de aplicaciones.
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: demo-seguros-networking
+  EksStackName:
+    Type: String
+    Default: demo-seguros-eks
+  PostgresEngineVersion:
+    Type: String
+    AllowedPattern: '[0-9]+\.[0-9]+'
+    Description: Version PostgreSQL con soporte estandar y disponible para db.t4g.micro en us-east-1.
+  PostgresParameterFamily:
+    Type: String
+    AllowedPattern: postgres[0-9]+
+    Description: Familia correspondiente a la version, por ejemplo postgres17; confirmar compatibilidad.
+Resources:
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subredes DB privadas A/B
+      SubnetIds:
+      - Fn::ImportValue:
+          Fn::Sub: ${NetworkStackName}-DbSubnetAId
+      - Fn::ImportValue:
+          Fn::Sub: ${NetworkStackName}-DbSubnetBId
+  DbParameters:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: TLS obligatorio
+      Family:
+        Ref: PostgresParameterFamily
+      Parameters:
+        rds.force_ssl: '1'
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion:
+        Ref: PostgresEngineVersion
+      EngineLifecycleSupport: open-source-rds-extended-support-disabled
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: '20'
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBSubnetGroupName:
+        Ref: DbSubnetGroup
+      VPCSecurityGroups:
+      - Fn::ImportValue:
+          Fn::Sub: ${NetworkStackName}-DatabaseSecurityGroupId
+      DBParameterGroupName:
+        Ref: DbParameters
+      MasterUsername: lab_admin
+      ManageMasterUserPassword: true
+      BackupRetentionPeriod: 1
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      EnablePerformanceInsights: false
+      MonitoringInterval: 0
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName:
+        Fn::Join:
+        - ''
+        - - Fn::ImportValue:
+              Fn::Sub: ${EksStackName}-ClusterName
+          - -dlq
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+      RedriveAllowPolicy:
+        redrivePermission: byQueue
+        sourceQueueArns:
+        - Fn::Sub:
+          - arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:${Name}-work
+          - Name:
+              Fn::ImportValue:
+                Fn::Sub: ${EksStackName}-ClusterName
+  WorkQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName:
+        Fn::Join:
+        - ''
+        - - Fn::ImportValue:
+              Fn::Sub: ${EksStackName}-ClusterName
+          - -work
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+      VisibilityTimeout: 120
+      ReceiveMessageWaitTimeSeconds: 20
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - DeadLetterQueue
+          - Arn
+        maxReceiveCount: 5
+  WorkflowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: states.amazonaws.com
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+            ArnEquals:
+              aws:SourceArn:
+                Fn::Sub:
+                - arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${Name}-dispatch
+                - Name:
+                    Fn::ImportValue:
+                      Fn::Sub: ${EksStackName}-ClusterName
+      Policies:
+      - PolicyName: LabPermissions
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: sqs:SendMessage
+            Resource:
+              Fn::GetAtt:
+              - WorkQueue
+              - Arn
+  Dispatcher:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName:
+        Fn::Join:
+        - ''
+        - - Fn::ImportValue:
+              Fn::Sub: ${EksStackName}-ClusterName
+          - -dispatch
+      StateMachineType: STANDARD
+      RoleArn:
+        Fn::GetAtt:
+        - WorkflowRole
+        - Arn
+      Definition:
+        Comment: Acepta un trabajo en SQS. No invoca HTTP privado ni espera procesamiento. Consumidor pendiente
+          en micro.
+        StartAt: Enqueue
+        TimeoutSeconds: 60
+        States:
+          Enqueue:
+            Type: Task
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:states:::sqs:sendMessage
+            Parameters:
+              QueueUrl:
+                Ref: WorkQueue
+              MessageBody.$: States.JsonToString($)
+            Retry:
+            - ErrorEquals:
+              - States.TaskFailed
+              IntervalSeconds: 2
+              MaxAttempts: 3
+              BackoffRate: 2
+            End: true
+  QueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+      - Ref: WorkQueue
+      - Ref: DeadLetterQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Deny
+          Principal: '*'
+          Action: sqs:*
+          Resource:
+          - Fn::GetAtt:
+            - WorkQueue
+            - Arn
+          - Fn::GetAtt:
+            - DeadLetterQueue
+            - Arn
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+        - Effect: Deny
+          Principal: '*'
+          Action: sqs:SendMessage
+          Resource:
+            Fn::GetAtt:
+            - WorkQueue
+            - Arn
+          Condition:
+            ArnNotEquals:
+              aws:PrincipalArn:
+                Fn::GetAtt:
+                - WorkflowRole
+                - Arn
+        - Effect: Deny
+          Principal: '*'
+          Action:
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:ChangeMessageVisibility
+          Resource:
+            Fn::GetAtt:
+            - WorkQueue
+            - Arn
+          Condition:
+            StringNotEquals:
+              aws:SourceVpce:
+                Fn::ImportValue:
+                  Fn::Sub: ${NetworkStackName}-SqsEndpointId
+  GeneralBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName:
+        Fn::Sub:
+        - ${AWS::AccountId}-${Name}-general
+        - Name:
+            Fn::ImportValue:
+              Fn::Sub: ${EksStackName}-ClusterName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+        - ObjectOwnership: BucketOwnerEnforced
+  GeneralBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: GeneralBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Deny
+          Principal: '*'
+          Action: s3:*
+          Resource:
+          - Fn::GetAtt:
+            - GeneralBucket
+            - Arn
+          - Fn::Sub: ${GeneralBucket.Arn}/*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+        - Effect: Deny
+          Principal: '*'
+          Action:
+          - s3:GetObject
+          - s3:PutObject
+          Resource:
+            Fn::Sub: ${GeneralBucket.Arn}/*
+          Condition:
+            StringNotEquals:
+              aws:SourceVpce:
+                Fn::ImportValue:
+                  Fn::Sub: ${NetworkStackName}-S3EndpointId
+  GeneralAppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: pods.eks.amazonaws.com
+          Action:
+          - sts:AssumeRole
+          - sts:TagSession
+          Condition:
+            StringEquals:
+              aws:RequestTag/eks-cluster-name:
+                Fn::ImportValue:
+                  Fn::Sub: ${EksStackName}-ClusterName
+              aws:RequestTag/kubernetes-namespace: lab-general
+              aws:RequestTag/kubernetes-service-account: micro
+      Policies:
+      - PolicyName: LabPermissions
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource:
+              Fn::GetAtt:
+              - GeneralBucket
+              - Arn
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:PutObject
+            Resource:
+              Fn::Sub: ${GeneralBucket.Arn}/sales/*
+          - Effect: Allow
+            Action: states:StartExecution
+            Resource:
+              Ref: Dispatcher
+            Condition:
+              StringEquals:
+                aws:SourceVpce:
+                  Fn::ImportValue:
+                    Fn::Sub: ${NetworkStackName}-StatesEndpointId
+  GeneralIdentity:
+    Type: AWS::EKS::PodIdentityAssociation
+    Properties:
+      ClusterName:
+        Fn::ImportValue:
+          Fn::Sub: ${EksStackName}-ClusterName
+      Namespace: lab-general
+      ServiceAccount: micro
+      RoleArn:
+        Fn::GetAtt:
+        - GeneralAppRole
+        - Arn
+  TercerosBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName:
+        Fn::Sub:
+        - ${AWS::AccountId}-${Name}-terceros
+        - Name:
+            Fn::ImportValue:
+              Fn::Sub: ${EksStackName}-ClusterName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+        - ObjectOwnership: BucketOwnerEnforced
+  TercerosBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: TercerosBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Deny
+          Principal: '*'
+          Action: s3:*
+          Resource:
+          - Fn::GetAtt:
+            - TercerosBucket
+            - Arn
+          - Fn::Sub: ${TercerosBucket.Arn}/*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+        - Effect: Deny
+          Principal: '*'
+          Action:
+          - s3:GetObject
+          - s3:PutObject
+          Resource:
+            Fn::Sub: ${TercerosBucket.Arn}/*
+          Condition:
+            StringNotEquals:
+              aws:SourceVpce:
+                Fn::ImportValue:
+                  Fn::Sub: ${NetworkStackName}-S3EndpointId
+  TercerosAppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: pods.eks.amazonaws.com
+          Action:
+          - sts:AssumeRole
+          - sts:TagSession
+          Condition:
+            StringEquals:
+              aws:RequestTag/eks-cluster-name:
+                Fn::ImportValue:
+                  Fn::Sub: ${EksStackName}-ClusterName
+              aws:RequestTag/kubernetes-namespace: lab-terceros
+              aws:RequestTag/kubernetes-service-account: micro
+      Policies:
+      - PolicyName: LabPermissions
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource:
+              Fn::GetAtt:
+              - TercerosBucket
+              - Arn
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:PutObject
+            Resource:
+              Fn::Sub: ${TercerosBucket.Arn}/sales/*
+          - Effect: Allow
+            Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:ChangeMessageVisibility
+            - sqs:GetQueueAttributes
+            Resource:
+              Fn::GetAtt:
+              - WorkQueue
+              - Arn
+            Condition:
+              StringEquals:
+                aws:SourceVpce:
+                  Fn::ImportValue:
+                    Fn::Sub: ${NetworkStackName}-SqsEndpointId
+  TercerosIdentity:
+    Type: AWS::EKS::PodIdentityAssociation
+    Properties:
+      ClusterName:
+        Fn::ImportValue:
+          Fn::Sub: ${EksStackName}-ClusterName
+      Namespace: lab-terceros
+      ServiceAccount: micro
+      RoleArn:
+        Fn::GetAtt:
+        - TercerosAppRole
+        - Arn
+  OnpremBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName:
+        Fn::Sub:
+        - ${AWS::AccountId}-${Name}-onprem
+        - Name:
+            Fn::ImportValue:
+              Fn::Sub: ${EksStackName}-ClusterName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+        - ObjectOwnership: BucketOwnerEnforced
+  OnpremBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: OnpremBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Deny
+          Principal: '*'
+          Action: s3:*
+          Resource:
+          - Fn::GetAtt:
+            - OnpremBucket
+            - Arn
+          - Fn::Sub: ${OnpremBucket.Arn}/*
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+        - Effect: Deny
+          Principal: '*'
+          Action:
+          - s3:GetObject
+          - s3:PutObject
+          Resource:
+            Fn::Sub: ${OnpremBucket.Arn}/*
+          Condition:
+            StringNotEquals:
+              aws:SourceVpce:
+                Fn::ImportValue:
+                  Fn::Sub: ${NetworkStackName}-S3EndpointId
+  OnpremAppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: pods.eks.amazonaws.com
+          Action:
+          - sts:AssumeRole
+          - sts:TagSession
+          Condition:
+            StringEquals:
+              aws:RequestTag/eks-cluster-name:
+                Fn::ImportValue:
+                  Fn::Sub: ${EksStackName}-ClusterName
+              aws:RequestTag/kubernetes-namespace: lab-onprem
+              aws:RequestTag/kubernetes-service-account: micro
+      Policies:
+      - PolicyName: LabPermissions
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource:
+              Fn::GetAtt:
+              - OnpremBucket
+              - Arn
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:PutObject
+            Resource:
+              Fn::Sub: ${OnpremBucket.Arn}/sales/*
+  OnpremIdentity:
+    Type: AWS::EKS::PodIdentityAssociation
+    Properties:
+      ClusterName:
+        Fn::ImportValue:
+          Fn::Sub: ${EksStackName}-ClusterName
+      Namespace: lab-onprem
+      ServiceAccount: micro
+      RoleArn:
+        Fn::GetAtt:
+        - OnpremAppRole
+        - Arn
+Outputs:
+  GeneralBucketName:
+    Value:
+      Ref: GeneralBucket
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralBucketName
+  GeneralAppRoleArn:
+    Value:
+      Fn::GetAtt:
+      - GeneralAppRole
+      - Arn
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralAppRoleArn
+  TercerosBucketName:
+    Value:
+      Ref: TercerosBucket
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosBucketName
+  TercerosAppRoleArn:
+    Value:
+      Fn::GetAtt:
+      - TercerosAppRole
+      - Arn
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosAppRoleArn
+  OnpremBucketName:
+    Value:
+      Ref: OnpremBucket
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremBucketName
+  OnpremAppRoleArn:
+    Value:
+      Fn::GetAtt:
+      - OnpremAppRole
+      - Arn
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremAppRoleArn
+  DatabaseEndpoint:
+    Value:
+      Fn::GetAtt:
+      - Database
+      - Endpoint.Address
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabaseEndpoint
+  DatabasePort:
+    Value:
+      Fn::GetAtt:
+      - Database
+      - Endpoint.Port
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabasePort
+  DatabaseAdminSecretArn:
+    Value:
+      Fn::GetAtt:
+      - Database
+      - MasterUserSecret.SecretArn
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabaseAdminSecretArn
+  QueueUrl:
+    Value:
+      Ref: WorkQueue
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-QueueUrl
+  QueueArn:
+    Value:
+      Fn::GetAtt:
+      - WorkQueue
+      - Arn
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-QueueArn
+  DlqUrl:
+    Value:
+      Ref: DeadLetterQueue
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DlqUrl
+  StateMachineArn:
+    Value:
+      Ref: Dispatcher
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-StateMachineArn

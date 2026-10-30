@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "NetworkStackName",
+    "ParameterValue": "demo-seguros-networking"
+  },
+  {
+    "ParameterKey": "EksStackName",
+    "ParameterValue": "demo-seguros-eks"
+  },
+  {
+    "ParameterKey": "PostgresEngineVersion",
+    "ParameterValue": "REQUIRED_PostgresEngineVersion"
+  },
+  {
+    "ParameterKey": "PostgresParameterFamily",
+    "ParameterValue": "REQUIRED_PostgresParameterFamily"
+  }
+]

@@ -1,118 +1,26 @@
 {
-  "Comment": "Orquesta el registro de venta y los pasos de documentos y póliza.",
-  "StartAt": "RegisterSale",
+  "Comment": "Acepta un trabajo en SQS. No invoca HTTP privado ni espera procesamiento. Consumidor pendiente en micro.",
+  "StartAt": "Enqueue",
+  "TimeoutSeconds": 60,
   "States": {
-    "RegisterSale": {
+    "Enqueue": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::apigateway:invoke",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
       "Parameters": {
-        "ApiEndpoint": "YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com",
-        "Stage": "prod",
-        "Path": "/api/v1/endpoint0/sales",
-        "Method": "POST",
-        "AuthType": "NO_AUTH",
-        "RequestBody.$": "$"
+        "QueueUrl": "${QUEUE_URL}",
+        "MessageBody.$": "States.JsonToString($)"
       },
-      "ResultSelector": {
-        "saleId.$": "$.ResponseBody.saleId"
-      },
-      "ResultPath": "$.sale",
-      "Retry": [{
-        "ErrorEquals": ["States.ALL"],
-        "IntervalSeconds": 1,
-        "BackoffRate": 2.0,
-        "MaxAttempts": 7
-      }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "WorkflowFailed" }],
-      "Next": "CreateDocument"
-    },
-    "CreateDocument": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::apigateway:invoke",
-      "Parameters": {
-        "ApiEndpoint": "YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com",
-        "Stage": "prod",
-        "Path": "/api/v1/endpoint1/documents",
-        "Method": "POST",
-        "AuthType": "NO_AUTH",
-        "RequestBody": { "saleId.$": "$.sale.saleId" }
-      },
-      "ResultSelector": { "documentId.$": "$.ResponseBody.documentId" },
-      "ResultPath": "$.document",
-      "Retry": [{ "ErrorEquals": ["States.ALL"], "IntervalSeconds": 1, "BackoffRate": 2.0, "MaxAttempts": 7 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "WorkflowFailed" }],
-      "Next": "CreatePolicy"
-    },
-    "CreatePolicy": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::apigateway:invoke",
-      "Parameters": {
-        "ApiEndpoint": "YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com",
-        "Stage": "prod",
-        "Path": "/api/v1/endpoint2/policies",
-        "Method": "POST",
-        "AuthType": "NO_AUTH",
-        "RequestBody": { "saleId.$": "$.sale.saleId" }
-      },
-      "ResultSelector": { "policyId.$": "$.ResponseBody.policyId" },
-      "ResultPath": "$.policy",
-      "Retry": [{ "ErrorEquals": ["States.ALL"], "IntervalSeconds": 1, "BackoffRate": 2.0, "MaxAttempts": 7 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "WorkflowFailed" }],
-      "Next": "UploadDocument"
-    },
-    "UploadDocument": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::apigateway:invoke",
-      "Parameters": {
-        "ApiEndpoint": "YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com",
-        "Stage": "prod",
-        "Path": "/api/v1/endpoint3/documents/upload",
-        "Method": "POST",
-        "AuthType": "NO_AUTH",
-        "RequestBody": { "saleId.$": "$.sale.saleId", "documentId.$": "$.document.documentId" }
-      },
-      "ResultPath": "$.upload",
-      "Retry": [{ "ErrorEquals": ["States.ALL"], "IntervalSeconds": 1, "BackoffRate": 2.0, "MaxAttempts": 7 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "WorkflowFailed" }],
-      "Next": "CompletePolicy"
-    },
-    "CompletePolicy": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::apigateway:invoke",
-      "Parameters": {
-        "ApiEndpoint": "YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com",
-        "Stage": "prod",
-        "Path": "/api/v1/endpoint4/policies/complete",
-        "Method": "POST",
-        "AuthType": "NO_AUTH",
-        "RequestBody": { "saleId.$": "$.sale.saleId", "policyId.$": "$.policy.policyId" }
-      },
-      "ResultPath": "$.completion",
-      "Retry": [{ "ErrorEquals": ["States.ALL"], "IntervalSeconds": 1, "BackoffRate": 2.0, "MaxAttempts": 7 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "WorkflowFailed" }],
-      "Next": "ReleaseDocument"
-    },
-    "ReleaseDocument": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::apigateway:invoke",
-      "Parameters": {
-        "ApiEndpoint": "YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com",
-        "Stage": "prod",
-        "Path": "/api/v1/endpoint5/documents/release",
-        "Method": "POST",
-        "AuthType": "NO_AUTH",
-        "RequestBody": { "saleId.$": "$.sale.saleId", "documentId.$": "$.document.documentId" }
-      },
-      "ResultSelector": { "status.$": "$.ResponseBody.status", "downloadUrl.$": "$.ResponseBody.downloadUrl" },
-      "ResultPath": "$.release",
-      "Retry": [{ "ErrorEquals": ["States.ALL"], "IntervalSeconds": 1, "BackoffRate": 2.0, "MaxAttempts": 7 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "WorkflowFailed" }],
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
       "End": true
-    },
-    "WorkflowFailed": {
-      "Type": "Fail",
-      "Error": "DocsWorkflowFailed",
-      "Cause": "Un paso agotó sus reintentos configurados."
     }
   }
 }

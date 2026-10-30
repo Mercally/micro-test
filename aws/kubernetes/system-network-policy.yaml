@@ -1,0 +1,50 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: coredns-required
+  namespace: kube-system
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: kube-dns
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: lab-general
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: lab-terceros
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: lab-onprem
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 10.20.0.2/32
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to:
+    - ipBlock:
+        cidr: 10.20.11.0/24
+    - ipBlock:
+        cidr: 10.20.12.0/24
+    - ipBlock:
+        cidr: 172.20.0.1/32
+    ports:
+    - protocol: TCP
+      port: 443

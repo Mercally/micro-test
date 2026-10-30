@@ -4,35 +4,35 @@
     "ParameterValue": "demo-seguros-networking"
   },
   {
-    "ParameterKey": "AdminPublicCidr",
-    "ParameterValue": "190.87.165.221/32"
-  },
-  {
     "ParameterKey": "AdminPrincipalArn",
-    "ParameterValue": "arn:aws:iam::491085384897:user/command_line_user"
+    "ParameterValue": "REQUIRED_AdminPrincipalArn"
   },
   {
     "ParameterKey": "KubernetesVersion",
-    "ParameterValue": "1.35"
+    "ParameterValue": "REQUIRED_KubernetesVersion"
   },
   {
     "ParameterKey": "NodeReleaseVersion",
-    "ParameterValue": "1.35.9-20261026"
+    "ParameterValue": "REQUIRED_NodeReleaseVersion"
   },
   {
     "ParameterKey": "VpcCniVersion",
-    "ParameterValue": "v1.22.4-eksbuild.8"
+    "ParameterValue": "REQUIRED_VpcCniVersion"
   },
   {
     "ParameterKey": "KubeProxyVersion",
-    "ParameterValue": "v1.35.3-eksbuild.59"
+    "ParameterValue": "REQUIRED_KubeProxyVersion"
   },
   {
     "ParameterKey": "CoreDnsVersion",
-    "ParameterValue": "v1.13.2-eksbuild.59"
+    "ParameterValue": "REQUIRED_CoreDnsVersion"
   },
   {
     "ParameterKey": "PodIdentityVersion",
-    "ParameterValue": "v1.4.1-eksbuild.3"
+    "ParameterValue": "REQUIRED_PodIdentityVersion"
+  },
+  {
+    "ParameterKey": "NetworkPolicyMode",
+    "ParameterValue": "strict"
   }
 ]
