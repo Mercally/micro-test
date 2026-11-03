@@ -1,5 +1,7 @@
 # Decisiones pendientes del laboratorio
 
+> Para la cuenta nueva y la práctica manual actual, usar [cloudformation/README.md](../cloudformation/README.md). Lo siguiente conserva el diseño anterior; no combinar sus stacks con la nueva base.
+
 Red privada, EKS con tres NG, SQS/DLQ, Step Functions y RDS PostgreSQL ya están representados en `01-network.yaml`, `02-eks.yaml` y `03-services.yaml`. Esta lista no propone stacks de ingreso ni conectividad externa.
 
 ## Entradas reales necesarias

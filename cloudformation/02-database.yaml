@@ -1,0 +1,135 @@
+# Crea una base nueva. No restaura datos de snapshots automaticamente.
+# Snapshot conserva datos al eliminar/reemplazar; snapshots retenidos generan cargos.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: PostgreSQL privado independiente de EKS; secreto administrado y snapshot
+  al eliminar.
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: micro-test-network
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9-]*'
+  PostgresEngineVersion:
+    Type: String
+    AllowedPattern: '[0-9]+\.[0-9]+'
+    Description: Version PostgreSQL con soporte estandar disponible en la region;
+      consultar RDS antes de crear.
+  PostgresParameterFamily:
+    Type: String
+    AllowedPattern: postgres[0-9]+
+    Description: Familia correspondiente a la version, por ejemplo postgres17; confirmar
+      compatibilidad.
+  DBInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedPattern: db\.[a-z0-9]+\.[a-z0-9]+
+    Description: Clase compatible con PostgreSQL y gp3 en la region seleccionada.
+  BackupRetentionDays:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 35
+Resources:
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subredes DB privadas A/B
+      SubnetIds:
+      - Fn::ImportValue:
+          Fn::Sub: ${NetworkStackName}-DbSubnetAId
+      - Fn::ImportValue:
+          Fn::Sub: ${NetworkStackName}-DbSubnetBId
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DbSubnetGroup
+      - Key: Project
+        Value: micro-test
+  DbParameters:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: TLS obligatorio
+      Family:
+        Ref: PostgresParameterFamily
+      Parameters:
+        rds.force_ssl: '1'
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DbParameters
+      - Key: Project
+        Value: micro-test
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion:
+        Ref: PostgresEngineVersion
+      EngineLifecycleSupport: open-source-rds-extended-support-disabled
+      DBInstanceClass:
+        Ref: DBInstanceClass
+      AllocatedStorage: '20'
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBSubnetGroupName:
+        Ref: DbSubnetGroup
+      VPCSecurityGroups:
+      - Fn::ImportValue:
+          Fn::Sub: ${NetworkStackName}-DatabaseSecurityGroupId
+      DBParameterGroupName:
+        Ref: DbParameters
+      MasterUsername: lab_admin
+      ManageMasterUserPassword: true
+      BackupRetentionPeriod:
+        Ref: BackupRetentionDays
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      EnablePerformanceInsights: false
+      MonitoringInterval: 0
+      DeletionProtection: false
+      DBName: lab
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-postgres
+      - Key: Project
+        Value: micro-test
+Outputs:
+  DatabaseId:
+    Value:
+      Ref: Database
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabaseId
+  DatabaseEndpoint:
+    Value:
+      Fn::GetAtt:
+      - Database
+      - Endpoint.Address
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabaseEndpoint
+  DatabasePort:
+    Value:
+      Fn::GetAtt:
+      - Database
+      - Endpoint.Port
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabasePort
+  MasterSecretArn:
+    Value:
+      Fn::GetAtt:
+      - Database
+      - MasterUserSecret.SecretArn
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-MasterSecretArn
+  DatabaseName:
+    Value: lab
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabaseName

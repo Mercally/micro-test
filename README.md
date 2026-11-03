@@ -1,5 +1,7 @@
 # Docs Simulator
 
+Guía de laboratorio ampliado: [LocalStack Student en Windows + WSL2](LOCALSTACK_LAB.md).
+
 Microservicio Spring Boot para simular los pasos de venta de un seguro, generación/liberación de documentos y creación de póliza. Usa una base PostgreSQL con un esquema por endpoint y S3 (LocalStack en desarrollo).
 
 ## Requisitos y arranque local

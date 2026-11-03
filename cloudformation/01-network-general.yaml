@@ -1,0 +1,535 @@
+# Crear antes de 02-database.yaml. No desplegar junto con aws/cloudformation/01-network.yaml.
+# Egress loopback evita la regla allow-all implicita de EC2; no permite salida util.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Base privada del laboratorio: ocho subredes y tablas, sin Internet ni
+  recursos EKS.'
+Parameters:
+  VpcSecondOctet:
+    Type: Number
+    Default: 20
+    MinValue: 0
+    MaxValue: 255
+    Description: Red 10.X.0.0/16. Confirmar que no se solape con redes futuras.
+  AvailabilityZoneIdA:
+    Type: String
+    AllowedPattern: '[a-z0-9]+-az[0-9]+'
+    Description: ID de AZ disponible en esta cuenta y region; consultar EC2 > Subnets.
+  AvailabilityZoneIdB:
+    Type: String
+    AllowedPattern: '[a-z0-9]+-az[0-9]+'
+    Description: Otra AZ disponible, distinta de A.
+Rules:
+  DistinctAvailabilityZones:
+    Assertions:
+    - Assert:
+        Fn::Not:
+        - Fn::Equals:
+          - Ref: AvailabilityZoneIdA
+          - Ref: AvailabilityZoneIdB
+      AssertDescription: Seleccionar dos AZ distintas.
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock:
+        Fn::Sub: 10.${VpcSecondOctet}.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-VPC
+      - Key: Project
+        Value: micro-test
+  GeneralSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::Sub: 10.${VpcSecondOctet}.11.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-GeneralSubnetA
+      - Key: Project
+        Value: micro-test
+      AvailabilityZoneId:
+        Ref: AvailabilityZoneIdA
+  GeneralRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-GeneralRouteTableA
+      - Key: Project
+        Value: micro-test
+  GeneralSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: GeneralSubnetA
+      RouteTableId:
+        Ref: GeneralRouteTableA
+  GeneralSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::Sub: 10.${VpcSecondOctet}.12.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-GeneralSubnetB
+      - Key: Project
+        Value: micro-test
+      AvailabilityZoneId:
+        Ref: AvailabilityZoneIdB
+  GeneralRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-GeneralRouteTableB
+      - Key: Project
+        Value: micro-test
+  GeneralSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: GeneralSubnetB
+      RouteTableId:
+        Ref: GeneralRouteTableB
+  TercerosSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::Sub: 10.${VpcSecondOctet}.13.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-TercerosSubnetA
+      - Key: Project
+        Value: micro-test
+      AvailabilityZoneId:
+        Ref: AvailabilityZoneIdA
+  TercerosRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-TercerosRouteTableA
+      - Key: Project
+        Value: micro-test
+  TercerosSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: TercerosSubnetA
+      RouteTableId:
+        Ref: TercerosRouteTableA
+  TercerosSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::Sub: 10.${VpcSecondOctet}.14.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-TercerosSubnetB
+      - Key: Project
+        Value: micro-test
+      AvailabilityZoneId:
+        Ref: AvailabilityZoneIdB
+  TercerosRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-TercerosRouteTableB
+      - Key: Project
+        Value: micro-test
+  TercerosSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: TercerosSubnetB
+      RouteTableId:
+        Ref: TercerosRouteTableB
+  OnpremSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::Sub: 10.${VpcSecondOctet}.15.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-OnpremSubnetA
+      - Key: Project
+        Value: micro-test
+      AvailabilityZoneId:
+        Ref: AvailabilityZoneIdA
+  OnpremRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-OnpremRouteTableA
+      - Key: Project
+        Value: micro-test
+  OnpremSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: OnpremSubnetA
+      RouteTableId:
+        Ref: OnpremRouteTableA
+  OnpremSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::Sub: 10.${VpcSecondOctet}.16.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-OnpremSubnetB
+      - Key: Project
+        Value: micro-test
+      AvailabilityZoneId:
+        Ref: AvailabilityZoneIdB
+  OnpremRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-OnpremRouteTableB
+      - Key: Project
+        Value: micro-test
+  OnpremSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: OnpremSubnetB
+      RouteTableId:
+        Ref: OnpremRouteTableB
+  DbSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::Sub: 10.${VpcSecondOctet}.21.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DbSubnetA
+      - Key: Project
+        Value: micro-test
+      AvailabilityZoneId:
+        Ref: AvailabilityZoneIdA
+  DbRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DbRouteTableA
+      - Key: Project
+        Value: micro-test
+  DbSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: DbSubnetA
+      RouteTableId:
+        Ref: DbRouteTableA
+  DbSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::Sub: 10.${VpcSecondOctet}.22.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DbSubnetB
+      - Key: Project
+        Value: micro-test
+      AvailabilityZoneId:
+        Ref: AvailabilityZoneIdB
+  DbRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DbRouteTableB
+      - Key: Project
+        Value: micro-test
+  DbSubnetBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: DbSubnetB
+      RouteTableId:
+        Ref: DbRouteTableB
+  AdminSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: Asignar solo a CloudShell VPC para administracion PostgreSQL
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-AdminSecurityGroup
+      - Key: Project
+        Value: micro-test
+  DatabaseClientSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: Asignar solo a aplicaciones autorizadas para PostgreSQL
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DatabaseClientSecurityGroup
+      - Key: Project
+        Value: micro-test
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: RDS privado; solo clientes autorizados y administracion
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 1
+        ToPort: 1
+        CidrIp: 127.0.0.1/32
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DatabaseSecurityGroup
+      - Key: Project
+        Value: micro-test
+  AdminDatabaseIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: DatabaseSecurityGroup
+      SourceSecurityGroupId:
+        Ref: AdminSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  AdminDatabaseEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: AdminSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  ClientDatabaseIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: DatabaseSecurityGroup
+      SourceSecurityGroupId:
+        Ref: DatabaseClientSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+  ClientDatabaseEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Ref: DatabaseClientSecurityGroup
+      DestinationSecurityGroupId:
+        Ref: DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+Outputs:
+  VPCId:
+    Value:
+      Ref: VPC
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-VPCId
+  GeneralSubnetAId:
+    Value:
+      Ref: GeneralSubnetA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralSubnetAId
+  GeneralRouteTableAId:
+    Value:
+      Ref: GeneralRouteTableA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralRouteTableAId
+  GeneralSubnetBId:
+    Value:
+      Ref: GeneralSubnetB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralSubnetBId
+  GeneralRouteTableBId:
+    Value:
+      Ref: GeneralRouteTableB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GeneralRouteTableBId
+  TercerosSubnetAId:
+    Value:
+      Ref: TercerosSubnetA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosSubnetAId
+  TercerosRouteTableAId:
+    Value:
+      Ref: TercerosRouteTableA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosRouteTableAId
+  TercerosSubnetBId:
+    Value:
+      Ref: TercerosSubnetB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosSubnetBId
+  TercerosRouteTableBId:
+    Value:
+      Ref: TercerosRouteTableB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-TercerosRouteTableBId
+  OnpremSubnetAId:
+    Value:
+      Ref: OnpremSubnetA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremSubnetAId
+  OnpremRouteTableAId:
+    Value:
+      Ref: OnpremRouteTableA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremRouteTableAId
+  OnpremSubnetBId:
+    Value:
+      Ref: OnpremSubnetB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremSubnetBId
+  OnpremRouteTableBId:
+    Value:
+      Ref: OnpremRouteTableB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-OnpremRouteTableBId
+  DbSubnetAId:
+    Value:
+      Ref: DbSubnetA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DbSubnetAId
+  DbRouteTableAId:
+    Value:
+      Ref: DbRouteTableA
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DbRouteTableAId
+  DbSubnetBId:
+    Value:
+      Ref: DbSubnetB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DbSubnetBId
+  DbRouteTableBId:
+    Value:
+      Ref: DbRouteTableB
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DbRouteTableBId
+  AdminSecurityGroupId:
+    Value:
+      Ref: AdminSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-AdminSecurityGroupId
+  DatabaseClientSecurityGroupId:
+    Value:
+      Ref: DatabaseClientSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabaseClientSecurityGroupId
+  DatabaseSecurityGroupId:
+    Value:
+      Ref: DatabaseSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-DatabaseSecurityGroupId
+  VpcCidr:
+    Value:
+      Fn::GetAtt:
+      - VPC
+      - CidrBlock
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-VpcCidr

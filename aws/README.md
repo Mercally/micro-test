@@ -1,5 +1,7 @@
 # Laboratorio privado: mismo micro, tres roles
 
+> Para la cuenta nueva y la práctica manual actual, usar [cloudformation/README.md](../cloudformation/README.md). Lo siguiente conserva el diseño anterior; no combinar sus stacks con la nueva base.
+
 Región **us-east-1**, AZ **us-east-1a / us-east-1b**. Estos archivos son una guía de recursos para creación manual. No se ha desplegado ni modificado AWS durante esta revisión.
 
 Un EKS privado contiene tres Managed Node Groups: `general`, `terceros` y `onprem`. Cada grupo abarca sus dos subredes. Los tres Deployments ejecutan **exactamente el mismo digest de tu micro Spring Boot**, con configuración propia y rol IAM asignado a sus pods mediante ServiceAccount + EKS Pod Identity. Los addons conservan sus imágenes de sistema. No se agrega otro micro ni un worker.
