@@ -1,0 +1,172 @@
+{
+  "checkedAt": "2026-11-03T17:08:25.042555+00:00",
+  "endpoint": "http://100.95.224.37:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,5.15.146.1-microsoft-standard-WSL2,x86_64"
+  },
+  "persistence": "disabled",
+  "resources": {
+    "AWS::ApiGateway::Deployment": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::ApiGateway::Method": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::ApiGateway::Resource": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::ApiGateway::RestApi": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::EC2::RouteTable": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::EC2::SecurityGroup": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::EC2::SecurityGroupIngress": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::EC2::Subnet": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::EC2::SubnetRouteTableAssociation": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::EC2::VPC": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::ECR::Repository": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::EKS::Cluster": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::EKS::Nodegroup": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::IAM::Role": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::Lambda::Function": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::Lambda::Permission": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::Logs::LogGroup": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::Pipes::Pipe": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::RDS::DBInstance": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::RDS::DBParameterGroup": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::RDS::DBSubnetGroup": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::S3::Bucket": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::SQS::Queue": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::SecretsManager::Secret": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    },
+    "AWS::StepFunctions::StateMachine": {
+      "error": {
+        "Code": "TypeNotFoundException",
+        "Message": "Type not found"
+      }
+    }
+  },
+  "apis": {
+    "eks.list_clusters": "responded; CRUD/runtime still require deployment tests",
+    "ecr.describe_repositories": "responded; CRUD/runtime still require deployment tests",
+    "rds.describe_db_instances": "responded; CRUD/runtime still require deployment tests",
+    "pipes.list_pipes": "responded; CRUD/runtime still require deployment tests",
+    "lambda.list_functions": "responded; CRUD/runtime still require deployment tests",
+    "stepfunctions.list_state_machines": "responded; CRUD/runtime still require deployment tests",
+    "apigateway.get_rest_apis": "responded; CRUD/runtime still require deployment tests"
+  }
+}

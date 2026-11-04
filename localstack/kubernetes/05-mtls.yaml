@@ -1,0 +1,11 @@
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: micro-test-local-strict
+  namespace: micro-test-local-general
+spec:
+  selector:
+    matchLabels:
+      app: micro-test-local-micro
+  mtls:
+    mode: STRICT

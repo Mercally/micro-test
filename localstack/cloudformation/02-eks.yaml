@@ -1,0 +1,142 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LocalStack only. Independent micro-test-local laboratory.
+Resources:
+  ClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: eks.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+  NodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+      - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+  Cluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: micro-test-local-eks
+      Version: '1.34'
+      RoleArn:
+        Fn::GetAtt:
+        - ClusterRole
+        - Arn
+      ResourcesVpcConfig:
+        SubnetIds:
+        - Fn::ImportValue: micro-test-local-generala
+        - Fn::ImportValue: micro-test-local-generalb
+        SecurityGroupIds:
+        - Fn::ImportValue: micro-test-local-cluster-sg
+        EndpointPrivateAccess: true
+        EndpointPublicAccess: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-eks
+      - Key: Lab
+        Value: micro-test-local
+  General:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName:
+        Ref: Cluster
+      NodegroupName: micro-test-local-general
+      NodeRole:
+        Fn::GetAtt:
+        - NodeRole
+        - Arn
+      Subnets:
+      - Fn::ImportValue: micro-test-local-generala
+      - Fn::ImportValue: micro-test-local-generalb
+      ScalingConfig:
+        MinSize: 1
+        MaxSize: 1
+        DesiredSize: 1
+      InstanceTypes:
+      - t3.medium
+      Labels:
+        lab-role: general
+        lab: micro-test-local
+      Tags:
+        Lab: micro-test-local
+  Terceros:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName:
+        Ref: Cluster
+      NodegroupName: micro-test-local-terceros
+      NodeRole:
+        Fn::GetAtt:
+        - NodeRole
+        - Arn
+      Subnets:
+      - Fn::ImportValue: micro-test-local-tercerosa
+      - Fn::ImportValue: micro-test-local-tercerosb
+      ScalingConfig:
+        MinSize: 1
+        MaxSize: 1
+        DesiredSize: 1
+      InstanceTypes:
+      - t3.medium
+      Labels:
+        lab-role: terceros
+        lab: micro-test-local
+      Tags:
+        Lab: micro-test-local
+      Taints:
+      - Key: dedicated
+        Value: terceros
+        Effect: NO_SCHEDULE
+  Onprem:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName:
+        Ref: Cluster
+      NodegroupName: micro-test-local-onprem
+      NodeRole:
+        Fn::GetAtt:
+        - NodeRole
+        - Arn
+      Subnets:
+      - Fn::ImportValue: micro-test-local-onprema
+      - Fn::ImportValue: micro-test-local-onpremb
+      ScalingConfig:
+        MinSize: 1
+        MaxSize: 1
+        DesiredSize: 1
+      InstanceTypes:
+      - t3.medium
+      Labels:
+        lab-role: onprem
+        lab: micro-test-local
+      Tags:
+        Lab: micro-test-local
+      Taints:
+      - Key: dedicated
+        Value: onprem
+        Effect: NO_SCHEDULE
+Outputs:
+  ClusterName:
+    Value:
+      Ref: Cluster
+    Export:
+      Name: micro-test-local-eks-name
+  Endpoint:
+    Value:
+      Fn::GetAtt:
+      - Cluster
+      - Endpoint

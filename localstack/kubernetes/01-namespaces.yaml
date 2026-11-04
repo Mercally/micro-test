@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: micro-test-local-general
+  labels:
+    lab: micro-test-local
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: micro-test-local-terceros
+  labels:
+    lab: micro-test-local
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: micro-test-local-onprem
+  labels:
+    lab: micro-test-local
+    istio-injection: enabled

@@ -38,18 +38,21 @@ public class WorkflowService {
     @Transactional
     public Map<String, Object> registerSale(Requests.RegisterSaleRequest request) {
         failureSimulator.beforeCall("endpoint0");
-        UUID saleId = findId("SELECT id FROM endpoint0.sales WHERE external_reference = ?", request.externalReference());
-        if (saleId == null) {
-            saleId = UUID.randomUUID();
-            jdbcTemplate.update("""
+        jdbcTemplate.update("""
                     INSERT INTO endpoint0.sales
                         (id, external_reference, customer_name, customer_email, product_code, status)
-                    VALUES (?, ?, ?, ?, ?, 'PENDING')
-                    """, saleId, request.externalReference(), request.customerName(),
+                    VALUES (?, ?, ?, ?, ?, 'PENDING') ON CONFLICT (external_reference) DO NOTHING
+                    """, UUID.randomUUID(), request.externalReference(), request.customerName(),
                     request.customerEmail(), request.productCode());
+        UUID saleId = findId("SELECT id FROM endpoint0.sales WHERE external_reference = ? FOR UPDATE", request.externalReference());
+        var existing = jdbcTemplate.queryForMap("SELECT * FROM endpoint0.sales WHERE id = ?", saleId);
+        if (!request.customerName().equals(existing.get("customer_name"))
+                || !request.customerEmail().equals(existing.get("customer_email"))
+                || !request.productCode().equals(existing.get("product_code"))) {
+            throw new com.example.docssimulator.api.PurchaseException(409, "REFERENCE_CONFLICT", "La referencia ya tiene otro contenido");
         }
         log.info("endpoint0 sale registered saleId={} externalReference={}", saleId, request.externalReference());
-        return Map.of("saleId", saleId.toString(), "status", "PENDING");
+        return Map.of("saleId", saleId.toString(), "status", existing.get("status"));
     }
 
     @Transactional
@@ -62,6 +65,13 @@ public class WorkflowService {
 
         // Validar existencia de la venta
         requireSale(saleId);
+        String current = jdbcTemplate.queryForObject("SELECT status FROM endpoint0.sales WHERE id = ?", String.class, saleId);
+        if ("COMPLETED".equals(current)) {
+            return Map.of("saleId", saleId.toString(), "status", current);
+        }
+        if ("COMPLETED".equals(status)) {
+            requireStep("SELECT id FROM endpoint5.document_releases WHERE sale_id = ?", saleId, "Falta liberar el documento");
+        }
 
         // Actualizar estado
         jdbcTemplate.update("""
@@ -80,10 +90,10 @@ public class WorkflowService {
 
     @Transactional
     public Map<String, Object> createDocument(Requests.SaleStepRequest request) {
-        failureSimulator.beforeCall("endpoint1");
         requireSale(request.saleId());
         UUID documentId = findId("SELECT id FROM endpoint1.documents WHERE sale_id = ?", request.saleId());
         if (documentId == null) {
+            failureSimulator.beforeCall("endpoint1");
             documentId = UUID.randomUUID();
             byte[] pdf = createPdf(request.saleId());
             jdbcTemplate.update("""
@@ -97,15 +107,15 @@ public class WorkflowService {
 
     @Transactional
     public Map<String, Object> createPolicy(Requests.SaleStepRequest request) {
-        failureSimulator.beforeCall("endpoint2");
         requireSale(request.saleId());
         UUID policyId = findId("SELECT id FROM endpoint2.policies WHERE sale_id = ?", request.saleId());
         if (policyId == null) {
+            failureSimulator.beforeCall("endpoint2");
             policyId = UUID.randomUUID();
             jdbcTemplate.update("""
                     INSERT INTO endpoint2.policies (id, sale_id, policy_number, status)
                     VALUES (?, ?, ?, 'INITIAL')
-                    """, policyId, request.saleId(), "POL-" + policyId.toString().substring(0, 8).toUpperCase());
+                    """, policyId, request.saleId(), "POL-" + policyId.toString().toUpperCase());
         }
         log.info("endpoint2 policy created saleId={} policyId={}", request.saleId(), policyId);
         return Map.of("saleId", request.saleId().toString(), "policyId", policyId.toString(), "status", "INITIAL");
@@ -113,7 +123,7 @@ public class WorkflowService {
 
     @Transactional
     public Map<String, Object> uploadDocument(Requests.DocumentStepRequest request) {
-        failureSimulator.beforeCall("endpoint3");
+        requireSale(request.saleId());
         byte[] content = jdbcTemplate.query("""
                         SELECT content FROM endpoint1.documents WHERE id = ? AND sale_id = ?
                         """,
@@ -124,9 +134,10 @@ public class WorkflowService {
         }
 
         String key = objectKey(request.saleId(), request.documentId());
-        s3Storage.upload(key, content);
         UUID uploadId = findId("SELECT id FROM endpoint3.uploads WHERE sale_id = ?", request.saleId());
         if (uploadId == null) {
+            failureSimulator.beforeCall("endpoint3");
+            s3Storage.upload(key, content);
             uploadId = UUID.randomUUID();
             jdbcTemplate.update("""
                     INSERT INTO endpoint3.uploads (id, sale_id, document_id, bucket, object_key, status)
@@ -141,7 +152,7 @@ public class WorkflowService {
 
     @Transactional
     public Map<String, Object> completePolicy(Requests.PolicyStepRequest request) {
-        failureSimulator.beforeCall("endpoint4");
+        requireSale(request.saleId());
         requireStep("SELECT id FROM endpoint1.documents WHERE sale_id = ?", request.saleId(), "Falta crear el documento");
         requireStep("SELECT id FROM endpoint3.uploads WHERE sale_id = ?", request.saleId(), "Falta subir el documento a S3");
         UUID policyId = findId("SELECT id FROM endpoint2.policies WHERE sale_id = ?", request.saleId());
@@ -151,6 +162,7 @@ public class WorkflowService {
 
         UUID completionId = findId("SELECT id FROM endpoint4.policy_completions WHERE sale_id = ?", request.saleId());
         if (completionId == null) {
+            failureSimulator.beforeCall("endpoint4");
             completionId = UUID.randomUUID();
             jdbcTemplate.update("""
                     INSERT INTO endpoint4.policy_completions (id, sale_id, policy_id, status)
@@ -163,7 +175,7 @@ public class WorkflowService {
 
     @Transactional
     public Map<String, Object> releaseDocument(Requests.DocumentStepRequest request) {
-        failureSimulator.beforeCall("endpoint5");
+        requireSale(request.saleId());
         requireStep("SELECT id FROM endpoint4.policy_completions WHERE sale_id = ?", request.saleId(),
                 "La póliza debe estar completada antes de liberar el documento");
         String key = jdbcTemplate.query("""
@@ -176,15 +188,13 @@ public class WorkflowService {
         }
 
         String downloadUrl = s3Storage.createDownloadUrl(key);
+        if (findId("SELECT id FROM endpoint5.document_releases WHERE sale_id = ?", request.saleId()) == null) {
+            failureSimulator.beforeCall("endpoint5");
+        }
         jdbcTemplate.update("""
                 INSERT INTO endpoint5.document_releases (id, sale_id, document_id, object_key, download_url, status)
                 VALUES (?, ?, ?, ?, ?, 'RELEASED')
-                ON CONFLICT (sale_id) DO UPDATE SET
-                    document_id = EXCLUDED.document_id,
-                    object_key = EXCLUDED.object_key,
-                    download_url = EXCLUDED.download_url,
-                    status = 'RELEASED',
-                    released_at = CURRENT_TIMESTAMP
+                ON CONFLICT (sale_id) DO NOTHING
                 """, UUID.randomUUID(), request.saleId(), request.documentId(), key, downloadUrl);
         log.info("endpoint5 document released saleId={} documentId={}", request.saleId(), request.documentId());
         return Map.of("saleId", request.saleId().toString(), "documentId", request.documentId().toString(),
@@ -200,7 +210,7 @@ public class WorkflowService {
     }
 
     private void requireSale(UUID saleId) {
-        requireStep("SELECT id FROM endpoint0.sales WHERE id = ?", saleId, "La venta no existe");
+        requireStep("SELECT id FROM endpoint0.sales WHERE id = ? FOR UPDATE", saleId, "La venta no existe");
     }
 
     private void requireStep(String sql, UUID saleId, String message) {

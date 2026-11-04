@@ -1,0 +1,156 @@
+{
+  "checkedAt": "2026-11-03T22:09:12.631540+00:00",
+  "endpoint": "http://100.95.224.37:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,5.15.146.1-microsoft-standard-WSL2,x86_64"
+  },
+  "stacks": [
+    {
+      "StackName": "micro-test-local-network",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-network/7a8eaad7-6024-4bf2-9e03-2a0525cfc3da",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:07:11.053955+00:00"
+    },
+    {
+      "StackName": "micro-test-local-registry",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-registry/71b3bb7b-3452-4107-89a7-d0fcc9a425b0",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:07:04.167715+00:00"
+    },
+    {
+      "StackName": "micro-test-local-database",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-database/e8946d8f-3221-4334-b126-a7997c5d7622",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:07:02.504517+00:00"
+    },
+    {
+      "StackName": "micro-test-local-storage",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-storage/4c64ccdc-5a66-4504-af64-d631b905285c",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:06:55.966469+00:00"
+    },
+    {
+      "StackName": "micro-test-local-queues",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-queues/2c63dff3-9f5a-44bf-b6e7-5f36a8d4212e",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:06:55.827524+00:00"
+    },
+    {
+      "StackName": "micro-test-local-lambda",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-lambda/e88f0596-9250-4a18-ab82-a2832486f024",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:06:52.673874+00:00"
+    },
+    {
+      "StackName": "micro-test-local-workflow",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-workflow/65bd9968-49ee-4e2e-8a73-e0cd5c15cc7b",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:06:52.596464+00:00"
+    },
+    {
+      "StackName": "micro-test-local-pipe",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-pipe/97a8d3fd-5431-497a-8a31-67be30c06093",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 17:22:07.885810+00:00"
+    },
+    {
+      "StackName": "micro-test-local-api",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-api/2d90080f-44ad-416a-a90e-bd1cd0615084",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:06:49.366835+00:00"
+    },
+    {
+      "StackName": "micro-test-local-eks",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-eks/7d8b8cd8-ed21-4ee9-8b58-047fd0cedbf9",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:07:07.569155+00:00"
+    },
+    {
+      "StackName": "micro-test-local-pipe",
+      "StackId": "arn:aws:cloudformation:us-east-1:000000000000:stack/micro-test-local-pipe/944d7752-45e8-444a-99cc-ad2878c615db",
+      "StackStatus": "DELETE_COMPLETE",
+      "DeletionTime": "2026-11-03 22:06:52.535527+00:00"
+    }
+  ],
+  "vpcs": [
+    {
+      "VpcId": "vpc-85b92f15ef7a3bc6a",
+      "CidrBlock": "172.31.0.0/16",
+      "IsDefault": true,
+      "State": "available",
+      "Tags": []
+    }
+  ],
+  "subnets": [
+    {
+      "SubnetId": "subnet-e75b2020f24070e09",
+      "VpcId": "vpc-85b92f15ef7a3bc6a",
+      "CidrBlock": "172.31.0.0/20",
+      "DefaultForAz": true,
+      "AvailabilityZone": "us-east-1a",
+      "Tags": []
+    },
+    {
+      "SubnetId": "subnet-ca8f77ba9cace58bf",
+      "VpcId": "vpc-85b92f15ef7a3bc6a",
+      "CidrBlock": "172.31.16.0/20",
+      "DefaultForAz": true,
+      "AvailabilityZone": "us-east-1b",
+      "Tags": []
+    },
+    {
+      "SubnetId": "subnet-0ee427e7e9d2e142a",
+      "VpcId": "vpc-85b92f15ef7a3bc6a",
+      "CidrBlock": "172.31.32.0/20",
+      "DefaultForAz": true,
+      "AvailabilityZone": "us-east-1c",
+      "Tags": []
+    },
+    {
+      "SubnetId": "subnet-98f0dc3b8940a46fb",
+      "VpcId": "vpc-85b92f15ef7a3bc6a",
+      "CidrBlock": "172.31.48.0/20",
+      "DefaultForAz": true,
+      "AvailabilityZone": "us-east-1d",
+      "Tags": []
+    },
+    {
+      "SubnetId": "subnet-e91c23477ffd01b25",
+      "VpcId": "vpc-85b92f15ef7a3bc6a",
+      "CidrBlock": "172.31.64.0/20",
+      "DefaultForAz": true,
+      "AvailabilityZone": "us-east-1e",
+      "Tags": []
+    },
+    {
+      "SubnetId": "subnet-9d8118d0699acd4be",
+      "VpcId": "vpc-85b92f15ef7a3bc6a",
+      "CidrBlock": "172.31.80.0/20",
+      "DefaultForAz": true,
+      "AvailabilityZone": "us-east-1f",
+      "Tags": []
+    }
+  ],
+  "securityGroups": [
+    {
+      "GroupId": "sg-0316ccfd4460b5efd",
+      "VpcId": "vpc-85b92f15ef7a3bc6a",
+      "GroupName": "default",
+      "Description": "default VPC security group",
+      "Tags": null
+    }
+  ],
+  "eventBuses": [
+    {
+      "Name": "default",
+      "Arn": "arn:aws:events:us-east-1:000000000000:event-bus/default",
+      "CreationTime": "2026-11-03 11:15:58.291678-06:00",
+      "LastModifiedTime": "2026-11-03 11:15:58.291682-06:00",
+      "Tags": []
+    }
+  ],
+  "activeStacks": []
+}

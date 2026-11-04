@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LocalStack only. Independent micro-test-local laboratory.
+Resources:
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/micro-test-local-diagnostic
+      RetentionInDays: 7
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: micro-test-local-access
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+              Fn::GetAtt:
+              - LogGroup
+              - Arn
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: micro-test-local-diagnostic
+      Runtime: python3.12
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+        - Role
+        - Arn
+      Timeout: 15
+      MemorySize: 128
+      Code:
+        ZipFile: RENDER_FROM_LOCAL_FIXTURE
+      Tags:
+      - Key: Name
+        Value: micro-test-local-diagnostic
+      - Key: Lab
+        Value: micro-test-local
+      Description: Local integration fixture; no sales publisher or authorizer.
+Outputs:
+  FunctionArn:
+    Value:
+      Fn::GetAtt:
+      - Function
+      - Arn
+    Export:
+      Name: micro-test-local-lambda-arn

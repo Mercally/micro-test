@@ -1,0 +1,14 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Local purchase Lambda artifacts; isolated from PDF data.
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: micro-test-local-business-artifacts
+      VersioningConfiguration: {Status: Enabled}
+      Tags: [{Key: Lab, Value: micro-test-local}]
+Outputs:
+  BucketName:
+    Value: {Ref: Bucket}

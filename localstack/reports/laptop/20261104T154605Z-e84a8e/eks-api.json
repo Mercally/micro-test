@@ -1,0 +1,72 @@
+{
+  "endpoint": "http://100.100.154.68:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,6.6.114.1-microsoft-standard-WSL2,x86_64"
+  },
+  "cluster": {
+    "name": "micro-test-local-eks",
+    "status": "ACTIVE",
+    "version": "1.34",
+    "endpoint": "https://localhost.localstack.cloud:4511"
+  },
+  "nodegroups": [
+    {
+      "nodegroupName": "micro-test-local-general",
+      "status": "ACTIVE",
+      "labels": {
+        "lab": "micro-test-local",
+        "lab-role": "general"
+      },
+      "taints": null,
+      "scalingConfig": {
+        "minSize": 1,
+        "maxSize": 1,
+        "desiredSize": 1
+      }
+    },
+    {
+      "nodegroupName": "micro-test-local-onprem",
+      "status": "ACTIVE",
+      "labels": {
+        "lab": "micro-test-local",
+        "lab-role": "onprem"
+      },
+      "taints": [
+        {
+          "key": "dedicated",
+          "value": "onprem",
+          "effect": "NO_SCHEDULE"
+        }
+      ],
+      "scalingConfig": {
+        "minSize": 1,
+        "maxSize": 1,
+        "desiredSize": 1
+      }
+    },
+    {
+      "nodegroupName": "micro-test-local-terceros",
+      "status": "ACTIVE",
+      "labels": {
+        "lab": "micro-test-local",
+        "lab-role": "terceros"
+      },
+      "taints": [
+        {
+          "key": "dedicated",
+          "value": "terceros",
+          "effect": "NO_SCHEDULE"
+        }
+      ],
+      "scalingConfig": {
+        "minSize": 1,
+        "maxSize": 1,
+        "desiredSize": 1
+      }
+    }
+  ],
+  "runtime": "PENDIENTE: Kubernetes API/Ready nodes/pods not reached from Mac"
+}

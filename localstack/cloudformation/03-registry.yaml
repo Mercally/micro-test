@@ -1,0 +1,22 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LocalStack only. Independent micro-test-local laboratory.
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: micro-test-local-docs
+      ImageTagMutability: MUTABLE
+      EmptyOnDelete: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-docs
+      - Key: Lab
+        Value: micro-test-local
+Outputs:
+  RepositoryUri:
+    Value:
+      Fn::GetAtt:
+      - Repository
+      - RepositoryUri
+    Export:
+      Name: micro-test-local-repository-uri

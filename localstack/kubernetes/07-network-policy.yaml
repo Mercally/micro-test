@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: micro-test-local-micro
+  namespace: micro-test-local-general
+spec:
+  podSelector:
+    matchLabels:
+      app: micro-test-local-micro
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          lab-access: allowed
+    ports:
+    - protocol: TCP
+      port: 8080

@@ -1,0 +1,306 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Local authenticated purchases, PostgreSQL outbox, SQS, Pipe and Standard workflow.
+Parameters:
+  CodeKey: {Type: String}
+  MicroBaseUrl:
+    Type: String
+    AllowedPattern: '^http://(10\.[0-9.]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9.]+|192\.168\.[0-9.]+):31080$'
+  RuntimeEndpoint:
+    Type: String
+    AllowedPattern: '^http://(10\.[0-9.]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9.]+|192\.168\.[0-9.]+|localhost.localstack.cloud):4566$'
+  DatabaseHost: {Type: String}
+  DatabasePort: {Type: Number}
+Resources:
+  AuthSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: micro-test-local-purchase-auth
+      GenerateSecretString:
+        SecretStringTemplate: '{"issuer":"micro-test-local"}'
+        GenerateStringKey: key
+        PasswordLength: 48
+        ExcludePunctuation: true
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  DLQ:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      QueueName: micro-test-local-purchases-dlq
+      MessageRetentionPeriod: 1209600
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  Queue:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      QueueName: micro-test-local-purchases
+      VisibilityTimeout: 60
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn: {Fn::GetAtt: [DLQ, Arn]}
+        maxReceiveCount: 3
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  PublisherLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: /aws/lambda/micro-test-local-publisher, RetentionInDays: 7}
+  TransportLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: /aws/lambda/micro-test-local-transport, RetentionInDays: 7}
+  AuthLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: /aws/lambda/micro-test-local-authorizer, RetentionInDays: 7}
+  PublisherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      Policies:
+      - PolicyName: publish-owned-outbox
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: ['secretsmanager:GetSecretValue']
+            Resource: {Fn::ImportValue: micro-test-local-database-secret}
+          - Effect: Allow
+            Action: ['sqs:SendMessage']
+            Resource: {Fn::GetAtt: [Queue, Arn]}
+          - Effect: Allow
+            Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
+            Resource: {Fn::GetAtt: [PublisherLogs, Arn]}
+  TransportRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      Policies:
+      - PolicyName: transport-logs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
+            Resource: {Fn::GetAtt: [TransportLogs, Arn]}
+  AuthorizerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      Policies:
+      - PolicyName: auth-owned-secret
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: ['secretsmanager:GetSecretValue']
+            Resource: {Ref: AuthSecret}
+          - Effect: Allow
+            Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
+            Resource: {Fn::GetAtt: [AuthLogs, Arn]}
+  Publisher:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: micro-test-local-publisher
+      Runtime: python3.12
+      Handler: publisher.handler
+      Role: {Fn::GetAtt: [PublisherRole, Arn]}
+      Timeout: 60
+      MemorySize: 256
+      Code: {S3Bucket: micro-test-local-business-artifacts, S3Key: {Ref: CodeKey}}
+      Environment:
+        Variables:
+          LAB_AWS_ENDPOINT: {Ref: RuntimeEndpoint}
+          DATABASE_HOST: {Ref: DatabaseHost}
+          DATABASE_PORT: {Ref: DatabasePort}
+          DATABASE_SECRET_ARN: {Fn::ImportValue: micro-test-local-database-secret}
+          QUEUE_URL: {Ref: Queue}
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  Transport:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: micro-test-local-transport
+      Runtime: python3.12
+      Handler: transport.handler
+      Role: {Fn::GetAtt: [TransportRole, Arn]}
+      Timeout: 20
+      MemorySize: 256
+      Code: {S3Bucket: micro-test-local-business-artifacts, S3Key: {Ref: CodeKey}}
+      Environment:
+        Variables:
+          LAB_AWS_ENDPOINT: {Ref: RuntimeEndpoint}
+          MICRO_BASE_URL: {Ref: MicroBaseUrl}
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  AuthorizerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: micro-test-local-authorizer
+      Runtime: python3.12
+      Handler: authorizer.handler
+      Role: {Fn::GetAtt: [AuthorizerRole, Arn]}
+      Timeout: 15
+      MemorySize: 128
+      Code: {S3Bucket: micro-test-local-business-artifacts, S3Key: {Ref: CodeKey}}
+      Environment:
+        Variables:
+          LAB_AWS_ENDPOINT: {Ref: RuntimeEndpoint}
+          AUTH_SECRET_ARN: {Ref: AuthSecret}
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  WorkflowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: states.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      Policies:
+      - PolicyName: invoke-transport
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: ['lambda:InvokeFunction']
+            Resource: {Fn::GetAtt: [Transport, Arn]}
+  Workflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: micro-test-local-purchases
+      StateMachineType: STANDARD
+      RoleArn: {Fn::GetAtt: [WorkflowRole, Arn]}
+      DefinitionString: __BUSINESS_ASL__
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  PipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: pipes.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      Policies:
+      - PolicyName: queue-to-workflow
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: ['sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:GetQueueAttributes']
+            Resource: {Fn::GetAtt: [Queue, Arn]}
+          - Effect: Allow
+            Action: ['states:StartExecution']
+            Resource: {Ref: Workflow}
+  Schedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: micro-test-local-publisher
+      ScheduleExpression: rate(1 minute)
+      State: DISABLED
+      Targets: [{Id: publisher, Arn: {Fn::GetAtt: [Publisher, Arn]}, Input: '{"limit":20}'}]
+  SchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: {Ref: Publisher}
+      Principal: events.amazonaws.com
+      SourceArn: {Fn::GetAtt: [Schedule, Arn]}
+  Api:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: micro-test-local-purchases
+      EndpointConfiguration: {Types: [REGIONAL]}
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  Authorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: purchase-jwt
+      RestApiId: {Ref: Api}
+      Type: TOKEN
+      IdentitySource: method.request.header.Authorization
+      AuthorizerResultTtlInSeconds: 0
+      AuthorizerUri:
+        Fn::Sub: arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${AuthorizerFunction.Arn}/invocations
+  AuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: {Ref: AuthorizerFunction}
+      Principal: apigateway.amazonaws.com
+      SourceArn: {Fn::Sub: 'arn:aws:execute-api:us-east-1:000000000000:${Api}/authorizers/*'}
+  Purchases:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: {Ref: Api}
+      ParentId: {Fn::GetAtt: [Api, RootResourceId]}
+      PathPart: purchases
+  Purchase:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: {Ref: Api}
+      ParentId: {Ref: Purchases}
+      PathPart: '{saleId}'
+  Retry:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: {Ref: Api}
+      ParentId: {Ref: Purchase}
+      PathPart: retry
+  AcceptMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: {Ref: Api}
+      ResourceId: {Ref: Purchases}
+      HttpMethod: POST
+      AuthorizationType: CUSTOM
+      AuthorizerId: {Ref: Authorizer}
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: POST
+        Uri: {Fn::Sub: '${MicroBaseUrl}/api/v1/purchases'}
+  StatusMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: {Ref: Api}
+      ResourceId: {Ref: Purchase}
+      HttpMethod: GET
+      AuthorizationType: CUSTOM
+      AuthorizerId: {Ref: Authorizer}
+      RequestParameters: {method.request.path.saleId: true}
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: {Fn::Sub: '${MicroBaseUrl}/api/v1/purchases/{saleId}'}
+        RequestParameters: {integration.request.path.saleId: method.request.path.saleId}
+  RetryMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: {Ref: Api}
+      ResourceId: {Ref: Retry}
+      HttpMethod: POST
+      AuthorizationType: CUSTOM
+      AuthorizerId: {Ref: Authorizer}
+      RequestParameters: {method.request.path.saleId: true}
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: POST
+        Uri: {Fn::Sub: '${MicroBaseUrl}/api/v1/purchases/{saleId}/retry'}
+        RequestParameters: {integration.request.path.saleId: method.request.path.saleId}
+  Deployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: [AcceptMethod, StatusMethod, RetryMethod]
+    Properties:
+      RestApiId: {Ref: Api}
+  Stage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: {Ref: Api}
+      DeploymentId: {Ref: Deployment}
+      StageName: lab
+Outputs:
+  ApiId: {Value: {Ref: Api}}
+  AuthSecretArn: {Value: {Ref: AuthSecret}}
+  QueueUrl: {Value: {Ref: Queue}}
+  QueueArn: {Value: {Fn::GetAtt: [Queue, Arn]}}
+  DLQUrl: {Value: {Ref: DLQ}}
+  StateMachineArn: {Value: {Ref: Workflow}}
+  PipeRoleArn: {Value: {Fn::GetAtt: [PipeRole, Arn]}}

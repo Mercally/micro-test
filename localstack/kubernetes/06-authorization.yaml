@@ -1,0 +1,16 @@
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: micro-test-local-micro
+  namespace: micro-test-local-general
+spec:
+  selector:
+    matchLabels:
+      app: micro-test-local-micro
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/micro-test-local-general/sa/micro-test-local-gateway
+        - cluster.local/ns/micro-test-local-general/sa/micro-test-local-probe-allowed

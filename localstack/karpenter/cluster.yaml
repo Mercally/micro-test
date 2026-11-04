@@ -1,0 +1,123 @@
+# Dedicated CAPD workload cluster. No topology controller owns worker replicas.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: micro-test-local-capd
+  labels:
+    lab.micro-test.local/owner: karpenter-capd
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: micro-test-local-capd
+  namespace: micro-test-local-capd
+spec:
+  clusterNetwork:
+    services:
+      cidrBlocks: [10.96.0.0/12]
+    pods:
+      cidrBlocks: [192.168.0.0/16]
+    serviceDomain: cluster.local
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+    kind: KubeadmControlPlane
+    name: micro-test-local-capd-control-plane
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: DockerCluster
+    name: micro-test-local-capd
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: DockerCluster
+metadata:
+  name: micro-test-local-capd
+  namespace: micro-test-local-capd
+spec: {}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+kind: KubeadmControlPlane
+metadata:
+  name: micro-test-local-capd-control-plane
+  namespace: micro-test-local-capd
+spec:
+  replicas: 1
+  version: v1.33.1
+  machineTemplate:
+    infrastructureRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      kind: DockerMachineTemplate
+      name: micro-test-local-capd-node
+  kubeadmConfigSpec:
+    clusterConfiguration:
+      apiServer:
+        certSANs: [localhost, 127.0.0.1]
+    initConfiguration:
+      nodeRegistration:
+        kubeletExtraArgs:
+          eviction-hard: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
+    joinConfiguration:
+      nodeRegistration:
+        kubeletExtraArgs:
+          eviction-hard: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: DockerMachineTemplate
+metadata:
+  name: micro-test-local-capd-node
+  namespace: micro-test-local-capd
+spec:
+  template:
+    spec:
+      customImage: kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: KubeadmConfigTemplate
+metadata:
+  name: micro-test-local-capd-worker
+  namespace: micro-test-local-capd
+spec:
+  template:
+    spec:
+      joinConfiguration:
+        nodeRegistration:
+          taints:
+            - key: karpenter.sh/unregistered
+              effect: NoExecute
+          kubeletExtraArgs:
+            eviction-hard: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  name: micro-test-local-capd-workers
+  namespace: micro-test-local-capd
+  labels:
+    node.cluster.x-k8s.io/karpenter-member: ""
+    lab.micro-test.local/cluster: micro-test-local-capd
+  annotations:
+    capacity.cluster-autoscaler.kubernetes.io/cpu: "2"
+    capacity.cluster-autoscaler.kubernetes.io/memory: 4Gi
+    capacity.cluster-autoscaler.kubernetes.io/maxPods: "110"
+    capacity.cluster-autoscaler.kubernetes.io/labels: kubernetes.io/arch=amd64,kubernetes.io/os=linux,node.kubernetes.io/instance-type=capd-local-worker,topology.kubernetes.io/zone=local
+spec:
+  clusterName: micro-test-local-capd
+  replicas: 0
+  selector:
+    matchLabels:
+      lab.micro-test.local/workers: elastic
+  template:
+    metadata:
+      labels:
+        lab.micro-test.local/workers: elastic
+    spec:
+      clusterName: micro-test-local-capd
+      version: v1.33.1
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          kind: KubeadmConfigTemplate
+          name: micro-test-local-capd-worker
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: DockerMachineTemplate
+        name: micro-test-local-capd-node

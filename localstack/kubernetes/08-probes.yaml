@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: micro-test-local-probe-allowed
+  namespace: micro-test-local-general
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: micro-test-local-probe-allowed
+  namespace: micro-test-local-general
+  labels:
+    lab-probe: 'true'
+    lab-access: allowed
+  annotations:
+    sidecar.istio.io/inject: 'true'
+spec:
+  serviceAccountName: micro-test-local-probe-allowed
+  nodeSelector:
+    lab-role: general
+  containers:
+  - name: curl
+    image: curlimages/curl:8.16.0
+    command:
+    - sleep
+    - infinity
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: micro-test-local-probe-denied
+  namespace: micro-test-local-general
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: micro-test-local-probe-denied
+  namespace: micro-test-local-general
+  labels:
+    lab-probe: 'true'
+    lab-access: allowed
+  annotations:
+    sidecar.istio.io/inject: 'true'
+spec:
+  serviceAccountName: micro-test-local-probe-denied
+  nodeSelector:
+    lab-role: general
+  containers:
+  - name: curl
+    image: curlimages/curl:8.16.0
+    command:
+    - sleep
+    - infinity
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: micro-test-local-probe-plain
+  namespace: micro-test-local-general
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: micro-test-local-probe-plain
+  namespace: micro-test-local-general
+  labels:
+    lab-probe: 'true'
+    lab-access: allowed
+  annotations:
+    sidecar.istio.io/inject: 'false'
+spec:
+  serviceAccountName: micro-test-local-probe-plain
+  nodeSelector:
+    lab-role: general
+  containers:
+  - name: curl
+    image: curlimages/curl:8.16.0
+    command:
+    - sleep
+    - infinity
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: micro-test-local-probe-blocked
+  namespace: micro-test-local-general
+  labels:
+    lab-probe: 'true'
+    lab-access: allowed
+  annotations:
+    sidecar.istio.io/inject: 'true'
+spec:
+  serviceAccountName: micro-test-local-probe-allowed
+  nodeSelector:
+    lab-role: general
+  containers:
+  - name: curl
+    image: curlimages/curl:8.16.0
+    command:
+    - sleep
+    - infinity
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi

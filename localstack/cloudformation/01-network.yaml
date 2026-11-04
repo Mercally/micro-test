@@ -1,0 +1,361 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LocalStack only. Independent micro-test-local laboratory.
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.77.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: micro-test-local-vpc
+      - Key: Lab
+        Value: micro-test-local
+  GeneralA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.77.11.0/24
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-generala
+      - Key: Lab
+        Value: micro-test-local
+  GeneralARoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-generala-routes
+      - Key: Lab
+        Value: micro-test-local
+  GeneralAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: GeneralA
+      RouteTableId:
+        Ref: GeneralARoutes
+  GeneralB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.77.12.0/24
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-generalb
+      - Key: Lab
+        Value: micro-test-local
+  GeneralBRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-generalb-routes
+      - Key: Lab
+        Value: micro-test-local
+  GeneralBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: GeneralB
+      RouteTableId:
+        Ref: GeneralBRoutes
+  TercerosA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.77.13.0/24
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-tercerosa
+      - Key: Lab
+        Value: micro-test-local
+  TercerosARoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-tercerosa-routes
+      - Key: Lab
+        Value: micro-test-local
+  TercerosAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: TercerosA
+      RouteTableId:
+        Ref: TercerosARoutes
+  TercerosB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.77.14.0/24
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-tercerosb
+      - Key: Lab
+        Value: micro-test-local
+  TercerosBRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-tercerosb-routes
+      - Key: Lab
+        Value: micro-test-local
+  TercerosBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: TercerosB
+      RouteTableId:
+        Ref: TercerosBRoutes
+  OnpremA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.77.15.0/24
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-onprema
+      - Key: Lab
+        Value: micro-test-local
+  OnpremARoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-onprema-routes
+      - Key: Lab
+        Value: micro-test-local
+  OnpremAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: OnpremA
+      RouteTableId:
+        Ref: OnpremARoutes
+  OnpremB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.77.16.0/24
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-onpremb
+      - Key: Lab
+        Value: micro-test-local
+  OnpremBRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-onpremb-routes
+      - Key: Lab
+        Value: micro-test-local
+  OnpremBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: OnpremB
+      RouteTableId:
+        Ref: OnpremBRoutes
+  DatabaseA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.77.21.0/24
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-databasea
+      - Key: Lab
+        Value: micro-test-local
+  DatabaseARoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-databasea-routes
+      - Key: Lab
+        Value: micro-test-local
+  DatabaseAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: DatabaseA
+      RouteTableId:
+        Ref: DatabaseARoutes
+  DatabaseB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      CidrBlock: 10.77.22.0/24
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: micro-test-local-databaseb
+      - Key: Lab
+        Value: micro-test-local
+  DatabaseBRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-databaseb-routes
+      - Key: Lab
+        Value: micro-test-local
+  DatabaseBAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: DatabaseB
+      RouteTableId:
+        Ref: DatabaseBRoutes
+  ClusterSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Local model only: Docker networking is not enforced by this
+        SG'
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-cluster-sg
+      - Key: Lab
+        Value: micro-test-local
+  DatabaseSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Local model only: Docker networking is not enforced by this
+        SG'
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-database-sg
+      - Key: Lab
+        Value: micro-test-local
+  ClientSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Local model only: Docker networking is not enforced by this
+        SG'
+      VpcId:
+        Ref: Vpc
+      Tags:
+      - Key: Name
+        Value: micro-test-local-client-sg
+      - Key: Lab
+        Value: micro-test-local
+  DatabaseIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: DatabaseSG
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId:
+        Ref: ClientSG
+Outputs:
+  VpcId:
+    Value:
+      Ref: Vpc
+    Export:
+      Name: micro-test-local-vpc
+  GeneralA:
+    Value:
+      Ref: GeneralA
+    Export:
+      Name: micro-test-local-generala
+  GeneralB:
+    Value:
+      Ref: GeneralB
+    Export:
+      Name: micro-test-local-generalb
+  TercerosA:
+    Value:
+      Ref: TercerosA
+    Export:
+      Name: micro-test-local-tercerosa
+  TercerosB:
+    Value:
+      Ref: TercerosB
+    Export:
+      Name: micro-test-local-tercerosb
+  OnpremA:
+    Value:
+      Ref: OnpremA
+    Export:
+      Name: micro-test-local-onprema
+  OnpremB:
+    Value:
+      Ref: OnpremB
+    Export:
+      Name: micro-test-local-onpremb
+  DatabaseA:
+    Value:
+      Ref: DatabaseA
+    Export:
+      Name: micro-test-local-databasea
+  DatabaseB:
+    Value:
+      Ref: DatabaseB
+    Export:
+      Name: micro-test-local-databaseb
+  ClusterSG:
+    Value:
+      Ref: ClusterSG
+    Export:
+      Name: micro-test-local-cluster-sg
+  DatabaseSG:
+    Value:
+      Ref: DatabaseSG
+    Export:
+      Name: micro-test-local-database-sg
+  ClientSG:
+    Value:
+      Ref: ClientSG
+    Export:
+      Name: micro-test-local-client-sg

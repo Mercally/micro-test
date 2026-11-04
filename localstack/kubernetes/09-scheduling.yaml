@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: micro-test-local-scheduling
+  namespace: micro-test-local-general
+spec:
+  nodeSelector:
+    lab-role: general
+  tolerations: []
+  containers:
+  - name: proof
+    image: busybox:1.37.0
+    command:
+    - sleep
+    - '360000'
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 32Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: micro-test-local-scheduling
+  namespace: micro-test-local-terceros
+spec:
+  nodeSelector:
+    lab-role: terceros
+  tolerations:
+  - key: dedicated
+    operator: Equal
+    value: terceros
+    effect: NoSchedule
+  containers:
+  - name: proof
+    image: busybox:1.37.0
+    command:
+    - sleep
+    - '360000'
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 32Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: micro-test-local-scheduling
+  namespace: micro-test-local-onprem
+spec:
+  nodeSelector:
+    lab-role: onprem
+  tolerations:
+  - key: dedicated
+    operator: Equal
+    value: onprem
+    effect: NoSchedule
+  containers:
+  - name: proof
+    image: busybox:1.37.0
+    command:
+    - sleep
+    - '360000'
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 32Mi

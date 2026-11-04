@@ -1,0 +1,40 @@
+{
+  "status": "PASS",
+  "host": "Mac: isolated PostgreSQL 16.15 on loopback 15432; Java 17.0.15",
+  "scope": "11 Java tests; 6 Python tests (publisher uses real SQL and simulated SQS); 8 separate safety tests. Not full laptop E2E.",
+  "java": [
+    {
+      "class": "com.example.docssimulator.service.PurchaseS3IntegrationTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "com.example.docssimulator.service.FailureSimulatorTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "com.example.docssimulator.service.PurchaseIntegrationTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "pythonTests": 6,
+  "safetyTests": 8,
+  "s3": {
+    "objectKey": "sales/4f093a4b-4a67-461d-b25b-ef6bf0765055/ad7c4eaf-a64b-4ded-b359-f6f9dd5fb78d.pdf",
+    "endpoint": "http://100.100.154.68:4566",
+    "sha256": "72fe66f69410b12818c1f4d6e54e3a2b5839eedc46b9c3115f820691b7290b73",
+    "versionId": "AaGnMfs5sOLnsOckR1fRRTaWP2LcSYut",
+    "eventId": "49d452dc-d923-4fc0-a0e8-ec068bc439a8",
+    "scope": "Java + PostgreSQL Mac + S3 laptop; no API/Pipe/SFN",
+    "saleId": "4f093a4b-4a67-461d-b25b-ef6bf0765055",
+    "status": "PASS"
+  }
+}

@@ -1,0 +1,92 @@
+# Generate ready-to-send copy with business.py http. Generated copy lives in .state/business/.
+# VS Code REST Client: execute named request, then status. Repeat same reference for idempotency.
+@baseUrl = __BASE_URL__
+@token = __TOKEN__
+@expiredToken = __EXPIRED__
+@invalidToken = __INVALID__
+@reference = __REFERENCE__
+
+### Accept: 202, saleId, eventId, correlationId. Publisher runs every minute.
+# @name purchase
+# @no-redirect
+POST {{baseUrl}}/purchases
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "externalReference": "{{reference}}",
+  "customerName": "Practica Local",
+  "customerEmail": "practice@example.com",
+  "productCode": "AUTO-01"
+}
+
+### Repeat first request unchanged: same saleId/eventId, one logical event.
+### Poll until COMPLETED or FAILED. This GET never regenerates PDF.
+# @name status
+# @no-redirect
+GET {{baseUrl}}/purchases/{{purchase.response.body.$.saleId}}
+Authorization: Bearer {{token}}
+
+### Download original S3 PDF after COMPLETED. Signed URL expires after 15 minutes.
+# @no-redirect
+GET {{status.response.body.$.downloadUrl}}
+
+### Same reference, different payload: 409
+# @no-redirect
+POST {{baseUrl}}/purchases
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"externalReference":"{{reference}}","customerName":"Practica Local","customerEmail":"practice@example.com","productCode":"DIFFERENT"}
+
+### Transient: two failures, Step Functions Retry recovers.
+# @name transient
+# @no-redirect
+POST {{baseUrl}}/purchases
+Authorization: Bearer {{token}}
+X-Lab-Failure: document:transient:2
+Content-Type: application/json
+
+{"externalReference":"{{reference}}-transient","customerName":"Practica Local","customerEmail":"practice@example.com","productCode":"AUTO-01"}
+
+### Observe transient execution and final state.
+# @no-redirect
+GET {{baseUrl}}/purchases/{{transient.response.body.$.saleId}}
+Authorization: Bearer {{token}}
+
+### Permanent: sale becomes FAILED, error remains queryable.
+# @name permanent
+# @no-redirect
+POST {{baseUrl}}/purchases
+Authorization: Bearer {{token}}
+X-Lab-Failure: upload:permanent:1
+Content-Type: application/json
+
+{"externalReference":"{{reference}}-permanent","customerName":"Practica Local","customerEmail":"practice@example.com","productCode":"AUTO-01"}
+
+### Observe permanent failure.
+# @no-redirect
+GET {{baseUrl}}/purchases/{{permanent.response.body.$.saleId}}
+Authorization: Bearer {{token}}
+
+### After FAILED: enqueue next generation; existing document/policy reused; fault cleared.
+# @no-redirect
+POST {{baseUrl}}/purchases/{{permanent.response.body.$.saleId}}/retry
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{}
+
+### Missing token: 401/403
+# @no-redirect
+GET {{baseUrl}}/purchases/{{purchase.response.body.$.saleId}}
+
+### Bad signature: 401/403
+# @no-redirect
+GET {{baseUrl}}/purchases/{{purchase.response.body.$.saleId}}
+Authorization: Bearer {{invalidToken}}
+
+### Expired token: 401/403
+# @no-redirect
+GET {{baseUrl}}/purchases/{{purchase.response.body.$.saleId}}
+Authorization: Bearer {{expiredToken}}

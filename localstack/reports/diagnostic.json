@@ -1,0 +1,70 @@
+{
+  "endpoint": "http://100.100.154.68:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,6.6.114.1-microsoft-standard-WSL2,x86_64"
+  },
+  "payload": {
+    "diagnosticId": "local-c84d33e3-ae65-495d-8444-25b8dd0f42b1",
+    "kind": "integration-only",
+    "value": 73
+  },
+  "lambda": {
+    "diagnostic": true,
+    "processedBy": "micro-test-local-diagnostic",
+    "messages": [
+      {
+        "diagnosticId": "local-c84d33e3-ae65-495d-8444-25b8dd0f42b1",
+        "kind": "integration-only",
+        "value": 73
+      }
+    ]
+  },
+  "apiGateway": {
+    "diagnostic": true,
+    "processedBy": "micro-test-local-diagnostic",
+    "messages": [
+      {
+        "diagnosticId": "local-c84d33e3-ae65-495d-8444-25b8dd0f42b1",
+        "kind": "integration-only",
+        "value": 73
+      }
+    ]
+  },
+  "pipeExecution": {
+    "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-diagnostic:6a5ba815-94aa-4028-9d21-daeb232facd9",
+    "input": [
+      {
+        "messageId": "1e8a8496-9352-4e98-8158-ec1b88b80167",
+        "body": "{\"diagnosticId\": \"local-c84d33e3-ae65-495d-8444-25b8dd0f42b1\", \"kind\": \"integration-only\", \"value\": 73}",
+        "attributes": {
+          "SenderId": "000000000000",
+          "SentTimestamp": "1793804187903",
+          "ApproximateReceiveCount": "1",
+          "ApproximateFirstReceiveTimestamp": "1793804188422"
+        },
+        "messageAttributes": {},
+        "md5OfBody": "ed6f898996bac627b4472ce1578679b6",
+        "eventSourceARN": "arn:aws:sqs:us-east-1:000000000000:micro-test-local-diagnostic",
+        "eventSource": "aws:sqs",
+        "awsRegion": "us-east-1"
+      }
+    ],
+    "output": {
+      "diagnostic": true,
+      "processedBy": "micro-test-local-diagnostic",
+      "messages": [
+        {
+          "diagnosticId": "local-c84d33e3-ae65-495d-8444-25b8dd0f42b1",
+          "kind": "integration-only",
+          "value": 73
+        }
+      ]
+    },
+    "status": "SUCCEEDED"
+  },
+  "pipeFinalState": "STOPPED",
+  "lifecycleTransport": "CreatePipe(STOPPED) + UpdatePipe(STOPPED), UpdatePipe(RUNNING/STOPPED); local compatibility workaround"
+}

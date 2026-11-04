@@ -1,0 +1,20 @@
+{
+  "status": "PASS",
+  "endpoint": "http://100.100.154.68:4566",
+  "scope": "Existing diagnostic API URL transport only; not purchase auth/E2E",
+  "url": "http://100.100.154.68:4566/_aws/execute-api/rsqtu29zqy/lab/diagnostic",
+  "payload": {
+    "diagnosticId": "laptop-url-3255adff-c083-49b8-8acb-8d3a843e7fca",
+    "value": 73
+  },
+  "response": {
+    "diagnostic": true,
+    "processedBy": "micro-test-local-diagnostic",
+    "messages": [
+      {
+        "diagnosticId": "laptop-url-3255adff-c083-49b8-8acb-8d3a843e7fca",
+        "value": 73
+      }
+    ]
+  }
+}

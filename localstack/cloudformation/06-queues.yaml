@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LocalStack only. Independent micro-test-local laboratory.
+Resources:
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: micro-test-local-diagnostic-dlq
+      MessageRetentionPeriod: 1209600
+      Tags:
+      - Key: Name
+        Value: micro-test-local-diagnostic-dlq
+      - Key: Lab
+        Value: micro-test-local
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: micro-test-local-diagnostic
+      VisibilityTimeout: 30
+      MessageRetentionPeriod: 86400
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - DeadLetterQueue
+          - Arn
+        maxReceiveCount: 3
+      Tags:
+      - Key: Name
+        Value: micro-test-local-diagnostic
+      - Key: Lab
+        Value: micro-test-local
+Outputs:
+  QueueUrl:
+    Value:
+      Ref: Queue
+    Export:
+      Name: micro-test-local-queue-url
+  QueueArn:
+    Value:
+      Fn::GetAtt:
+      - Queue
+      - Arn
+    Export:
+      Name: micro-test-local-queue-arn
+  DlqUrl:
+    Value:
+      Ref: DeadLetterQueue
+    Export:
+      Name: micro-test-local-dlq-url

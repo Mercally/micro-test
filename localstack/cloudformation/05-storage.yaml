@@ -1,0 +1,32 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LocalStack only. Independent micro-test-local laboratory.
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: micro-test-local-documents
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+      - Key: Name
+        Value: micro-test-local-documents
+      - Key: Lab
+        Value: micro-test-local
+Outputs:
+  BucketName:
+    Value:
+      Ref: Bucket
+    Export:
+      Name: micro-test-local-bucket
+  BucketArn:
+    Value:
+      Fn::GetAtt:
+      - Bucket
+      - Arn
+    Export:
+      Name: micro-test-local-bucket-arn

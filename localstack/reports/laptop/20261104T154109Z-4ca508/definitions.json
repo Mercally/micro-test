@@ -1,0 +1,25 @@
+{
+  "endpoint": "http://100.100.154.68:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,6.6.114.1-microsoft-standard-WSL2,x86_64"
+  },
+  "checks": {
+    "cloudformation_artifacts": {
+      "status": "PASS"
+    },
+    "cloudformation_business": {
+      "status": "PASS"
+    },
+    "cloudformation_runtime-probe": {
+      "status": "PASS"
+    },
+    "asl": {
+      "status": "PASS",
+      "result": "OK",
+      "diagnostics": []
+    }
+  }
+}

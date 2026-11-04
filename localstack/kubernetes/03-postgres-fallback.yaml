@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: micro-test-local-postgres
+  namespace: micro-test-local-general
+spec:
+  selector:
+    app: micro-test-local-postgres
+  ports:
+  - name: postgres
+    port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: micro-test-local-postgres
+  namespace: micro-test-local-general
+spec:
+  serviceName: micro-test-local-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: micro-test-local-postgres
+  template:
+    metadata:
+      labels:
+        app: micro-test-local-postgres
+      annotations:
+        sidecar.istio.io/inject: 'false'
+    spec:
+      nodeSelector:
+        lab-role: general
+      containers:
+      - name: postgres
+        image: postgres:16.13-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          value: docs
+        - name: POSTGRES_USER
+          value: docs
+        - name: POSTGRES_PASSWORD
+          value: local-docs-only
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - docs
+            - -d
+            - docs
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: '1'
+            memory: 512Mi
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 2Gi

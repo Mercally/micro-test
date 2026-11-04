@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LocalStack only. Independent micro-test-local laboratory.
+Resources:
+  SubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Local database metadata
+      SubnetIds:
+      - Fn::ImportValue: micro-test-local-databasea
+      - Fn::ImportValue: micro-test-local-databaseb
+  Parameters:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Local PostgreSQL; force_ssl is not enforced by LocalStack
+      Family: postgres16
+      Parameters:
+        rds.force_ssl: '1'
+  Secret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: micro-test-local-database
+      Description: Disposable local credentials only
+      SecretString: '{"username":"docs","password":"local-docs-only","dbname":"docs"}'
+      Tags:
+      - Key: Name
+        Value: micro-test-local-database
+      - Key: Lab
+        Value: micro-test-local
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: micro-test-local-database
+      Engine: postgres
+      EngineVersion: '16'
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: '20'
+      DBName: docs
+      MasterUsername: docs
+      MasterUserPassword: local-docs-only
+      DBSubnetGroupName:
+        Ref: SubnetGroup
+      DBParameterGroupName:
+        Ref: Parameters
+      VPCSecurityGroups:
+      - Fn::ImportValue: micro-test-local-database-sg
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 0
+      Tags:
+      - Key: Name
+        Value: micro-test-local-database
+      - Key: Lab
+        Value: micro-test-local
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+Outputs:
+  Host:
+    Value:
+      Fn::GetAtt:
+      - Database
+      - Endpoint.Address
+    Export:
+      Name: micro-test-local-database-host
+  Port:
+    Value:
+      Fn::GetAtt:
+      - Database
+      - Endpoint.Port
+    Export:
+      Name: micro-test-local-database-port
+  SecretArn:
+    Value:
+      Ref: Secret
+    Export:
+      Name: micro-test-local-database-secret

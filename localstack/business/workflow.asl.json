@@ -1,0 +1,317 @@
+{
+  "Comment": "Purchase flow. Lambda is local HTTP transport; Java owns business logic.",
+  "StartAt": "Normalize",
+  "TimeoutSeconds": 240,
+  "States": {
+    "Normalize": {
+      "Type": "Task",
+      "Resource": "${Transport.Arn}",
+      "Parameters": {
+        "operation": "normalize",
+        "input.$": "$",
+        "owner.$": "$$.Execution.Id"
+      },
+      "TimeoutSeconds": 20,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "TransientStepError",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Claim"
+    },
+    "Claim": {
+      "Type": "Task",
+      "Resource": "${Transport.Arn}",
+      "Parameters": {
+        "operation": "claim",
+        "context.$": "$"
+      },
+      "TimeoutSeconds": 20,
+      "ResultPath": "$.claim",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "TransientStepError",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordFailure"
+        }
+      ],
+      "Next": "Claimed"
+    },
+    "Claimed": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.claim.claimed",
+          "BooleanEquals": true,
+          "Next": "Document"
+        }
+      ],
+      "Default": "Duplicate"
+    },
+    "Document": {
+      "Type": "Task",
+      "Resource": "${Transport.Arn}",
+      "Parameters": {
+        "operation": "document",
+        "context.$": "$"
+      },
+      "TimeoutSeconds": 20,
+      "ResultPath": "$.document",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "TransientStepError",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordFailure"
+        }
+      ],
+      "Next": "Policy"
+    },
+    "Policy": {
+      "Type": "Task",
+      "Resource": "${Transport.Arn}",
+      "Parameters": {
+        "operation": "policy",
+        "context.$": "$"
+      },
+      "TimeoutSeconds": 20,
+      "ResultPath": "$.policy",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "TransientStepError",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordFailure"
+        }
+      ],
+      "Next": "Upload"
+    },
+    "Upload": {
+      "Type": "Task",
+      "Resource": "${Transport.Arn}",
+      "Parameters": {
+        "operation": "upload",
+        "context.$": "$"
+      },
+      "TimeoutSeconds": 20,
+      "ResultPath": "$.upload",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "TransientStepError",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordFailure"
+        }
+      ],
+      "Next": "CompletePolicy"
+    },
+    "CompletePolicy": {
+      "Type": "Task",
+      "Resource": "${Transport.Arn}",
+      "Parameters": {
+        "operation": "completePolicy",
+        "context.$": "$"
+      },
+      "TimeoutSeconds": 20,
+      "ResultPath": "$.completion",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "TransientStepError",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordFailure"
+        }
+      ],
+      "Next": "Release"
+    },
+    "Release": {
+      "Type": "Task",
+      "Resource": "${Transport.Arn}",
+      "Parameters": {
+        "operation": "release",
+        "context.$": "$"
+      },
+      "TimeoutSeconds": 20,
+      "ResultPath": "$.release",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "TransientStepError",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordFailure"
+        }
+      ],
+      "Next": "Finish"
+    },
+    "Finish": {
+      "Type": "Task",
+      "Resource": "${Transport.Arn}",
+      "Parameters": {
+        "operation": "finish",
+        "context.$": "$"
+      },
+      "TimeoutSeconds": 20,
+      "ResultPath": "$.result",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "TransientStepError",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.failure",
+          "Next": "RecordFailure"
+        }
+      ],
+      "Next": "Completed"
+    },
+    "RecordFailure": {
+      "Type": "Task",
+      "Resource": "${Transport.Arn}",
+      "Parameters": {
+        "operation": "fail",
+        "context.$": "$"
+      },
+      "TimeoutSeconds": 20,
+      "ResultPath": "$.recordedFailure",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "TransientStepError",
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.recordingFailure",
+          "Next": "Failed"
+        }
+      ],
+      "Next": "Failed"
+    },
+    "Failed": {
+      "Type": "Fail",
+      "Error": "PurchaseWorkflowFailed",
+      "Cause": "Consult execution history and GET /purchases/{saleId}; retry explicitly after failure/lease expiry."
+    },
+    "Duplicate": {
+      "Type": "Succeed"
+    },
+    "Completed": {
+      "Type": "Succeed"
+    }
+  }
+}

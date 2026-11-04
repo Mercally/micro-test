@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Optional local HTTP integration after WSL bootstrap; no authorizer or
+  private AWS VPC Link.
+Parameters:
+  MicroBaseUrl:
+    Type: String
+    AllowedPattern: ^http://(10\.[0-9.]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9.]+|192\.168\.[0-9.]+):31080$
+Resources:
+  Api:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: micro-test-local-micro
+      EndpointConfiguration:
+        Types:
+        - REGIONAL
+      Tags:
+      - Key: Lab
+        Value: micro-test-local
+  Proxy:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: Api
+      ParentId:
+        Fn::GetAtt:
+        - Api
+        - RootResourceId
+      PathPart: '{proxy+}'
+  Method:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId:
+        Ref: Api
+      ResourceId:
+        Ref: Proxy
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.proxy: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        Uri:
+          Fn::Sub: ${MicroBaseUrl}/{proxy}
+        RequestParameters:
+          integration.request.path.proxy: method.request.path.proxy
+  Deployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+    - Method
+    Properties:
+      RestApiId:
+        Ref: Api
+      StageName: lab
+Outputs:
+  ApiId:
+    Value:
+      Ref: Api
+    Export:
+      Name: micro-test-local-micro-api-id

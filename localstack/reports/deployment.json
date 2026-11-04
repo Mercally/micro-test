@@ -1,0 +1,513 @@
+{
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,5.15.146.1-microsoft-standard-WSL2,x86_64"
+  },
+  "endpoint": "http://100.95.224.37:4566",
+  "persistence": {
+    "persistence": "disabled"
+  },
+  "stacks": {
+    "micro-test-local-network": {
+      "status": "CREATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "Vpc",
+          "ResourceType": "AWS::EC2::VPC",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "vpc-c1bfaecba31f00683"
+        },
+        {
+          "LogicalResourceId": "ClientSG",
+          "ResourceType": "AWS::EC2::SecurityGroup",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "sg-2d1f35776e5ad5ec2"
+        },
+        {
+          "LogicalResourceId": "ClusterSG",
+          "ResourceType": "AWS::EC2::SecurityGroup",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "sg-69b22625bd8acb1f2"
+        },
+        {
+          "LogicalResourceId": "DatabaseA",
+          "ResourceType": "AWS::EC2::Subnet",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "subnet-56b498c46bfd96c34"
+        },
+        {
+          "LogicalResourceId": "DatabaseARoutes",
+          "ResourceType": "AWS::EC2::RouteTable",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtb-51e03aa4cd100b623"
+        },
+        {
+          "LogicalResourceId": "DatabaseAAssociation",
+          "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtbassoc-7c31dd1edd8485a82"
+        },
+        {
+          "LogicalResourceId": "DatabaseB",
+          "ResourceType": "AWS::EC2::Subnet",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "subnet-c7d9f07c232e035e6"
+        },
+        {
+          "LogicalResourceId": "DatabaseBRoutes",
+          "ResourceType": "AWS::EC2::RouteTable",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtb-f0c1a0d94cea98a93"
+        },
+        {
+          "LogicalResourceId": "DatabaseBAssociation",
+          "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtbassoc-ba59306241376f671"
+        },
+        {
+          "LogicalResourceId": "DatabaseSG",
+          "ResourceType": "AWS::EC2::SecurityGroup",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "sg-717b52853be43883e"
+        },
+        {
+          "LogicalResourceId": "DatabaseIngress",
+          "ResourceType": "AWS::EC2::SecurityGroupIngress",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "sgr-02123a0f030811d1b"
+        },
+        {
+          "LogicalResourceId": "GeneralA",
+          "ResourceType": "AWS::EC2::Subnet",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "subnet-081e46f8b46980682"
+        },
+        {
+          "LogicalResourceId": "GeneralARoutes",
+          "ResourceType": "AWS::EC2::RouteTable",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtb-827080488559e878d"
+        },
+        {
+          "LogicalResourceId": "GeneralAAssociation",
+          "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtbassoc-1faea6260d5a2a6bb"
+        },
+        {
+          "LogicalResourceId": "GeneralB",
+          "ResourceType": "AWS::EC2::Subnet",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "subnet-b5e347b6359965775"
+        },
+        {
+          "LogicalResourceId": "GeneralBRoutes",
+          "ResourceType": "AWS::EC2::RouteTable",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtb-c2a469aa225d08cff"
+        },
+        {
+          "LogicalResourceId": "GeneralBAssociation",
+          "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtbassoc-dec7060757610ca05"
+        },
+        {
+          "LogicalResourceId": "OnpremA",
+          "ResourceType": "AWS::EC2::Subnet",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "subnet-12166af672cf78542"
+        },
+        {
+          "LogicalResourceId": "OnpremARoutes",
+          "ResourceType": "AWS::EC2::RouteTable",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtb-4376165ce2853ccce"
+        },
+        {
+          "LogicalResourceId": "OnpremAAssociation",
+          "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtbassoc-d2431281bcb535513"
+        },
+        {
+          "LogicalResourceId": "OnpremB",
+          "ResourceType": "AWS::EC2::Subnet",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "subnet-62e3be4e1104494b4"
+        },
+        {
+          "LogicalResourceId": "OnpremBRoutes",
+          "ResourceType": "AWS::EC2::RouteTable",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtb-33863ff72779074c4"
+        },
+        {
+          "LogicalResourceId": "OnpremBAssociation",
+          "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtbassoc-8f1b1f8d3cd46305e"
+        },
+        {
+          "LogicalResourceId": "TercerosA",
+          "ResourceType": "AWS::EC2::Subnet",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "subnet-4b71a2bd342e7a411"
+        },
+        {
+          "LogicalResourceId": "TercerosARoutes",
+          "ResourceType": "AWS::EC2::RouteTable",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtb-f0b681e28845fb496"
+        },
+        {
+          "LogicalResourceId": "TercerosAAssociation",
+          "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtbassoc-869f04077fd2ac7c8"
+        },
+        {
+          "LogicalResourceId": "TercerosB",
+          "ResourceType": "AWS::EC2::Subnet",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "subnet-164e999f68dd8081d"
+        },
+        {
+          "LogicalResourceId": "TercerosBRoutes",
+          "ResourceType": "AWS::EC2::RouteTable",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtb-4761b67abcdd2e376"
+        },
+        {
+          "LogicalResourceId": "TercerosBAssociation",
+          "ResourceType": "AWS::EC2::SubnetRouteTableAssociation",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "rtbassoc-b26248e4987681e49"
+        }
+      ]
+    },
+    "micro-test-local-eks": {
+      "status": "CREATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "ClusterRole",
+          "ResourceType": "AWS::IAM::Role",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-eks-ClusterRole-32ec876e"
+        },
+        {
+          "LogicalResourceId": "Cluster",
+          "ResourceType": "AWS::EKS::Cluster",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-eks"
+        },
+        {
+          "LogicalResourceId": "NodeRole",
+          "ResourceType": "AWS::IAM::Role",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-eks-NodeRole-4eb1542a"
+        },
+        {
+          "LogicalResourceId": "General",
+          "ResourceType": "AWS::EKS::Nodegroup",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-eks/micro-test-local-general"
+        },
+        {
+          "LogicalResourceId": "Onprem",
+          "ResourceType": "AWS::EKS::Nodegroup",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-eks/micro-test-local-onprem"
+        },
+        {
+          "LogicalResourceId": "Terceros",
+          "ResourceType": "AWS::EKS::Nodegroup",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-eks/micro-test-local-terceros"
+        }
+      ]
+    },
+    "micro-test-local-registry": {
+      "status": "CREATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "Repository",
+          "ResourceType": "AWS::ECR::Repository",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-docs"
+        }
+      ]
+    },
+    "micro-test-local-database": {
+      "status": "CREATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "Parameters",
+          "ResourceType": "AWS::RDS::DBParameterGroup",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "parameters-f2f1f9dd"
+        },
+        {
+          "LogicalResourceId": "SubnetGroup",
+          "ResourceType": "AWS::RDS::DBSubnetGroup",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "SubnetGroup-0518397e"
+        },
+        {
+          "LogicalResourceId": "Database",
+          "ResourceType": "AWS::RDS::DBInstance",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-database"
+        },
+        {
+          "LogicalResourceId": "Secret",
+          "ResourceType": "AWS::SecretsManager::Secret",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "arn:aws:secretsmanager:us-east-1:000000000000:secret:micro-test-local-database-PDyVxU"
+        }
+      ]
+    },
+    "micro-test-local-storage": {
+      "status": "CREATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "Bucket",
+          "ResourceType": "AWS::S3::Bucket",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-documents"
+        }
+      ]
+    },
+    "micro-test-local-queues": {
+      "status": "CREATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "DeadLetterQueue",
+          "ResourceType": "AWS::SQS::Queue",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/micro-test-local-diagnostic-dlq"
+        },
+        {
+          "LogicalResourceId": "Queue",
+          "ResourceType": "AWS::SQS::Queue",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/micro-test-local-diagnostic"
+        }
+      ]
+    },
+    "micro-test-local-lambda": {
+      "status": "UPDATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "LogGroup",
+          "ResourceType": "AWS::Logs::LogGroup",
+          "ResourceStatus": "UPDATE_COMPLETE",
+          "PhysicalResourceId": "/aws/lambda/micro-test-local-diagnostic"
+        },
+        {
+          "LogicalResourceId": "Role",
+          "ResourceType": "AWS::IAM::Role",
+          "ResourceStatus": "UPDATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-lambda-Role-052f6b04"
+        },
+        {
+          "LogicalResourceId": "Function",
+          "ResourceType": "AWS::Lambda::Function",
+          "ResourceStatus": "UPDATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-diagnostic"
+        }
+      ]
+    },
+    "micro-test-local-workflow": {
+      "status": "CREATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "Role",
+          "ResourceType": "AWS::IAM::Role",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-workflow-Role-53433866"
+        },
+        {
+          "LogicalResourceId": "Machine",
+          "ResourceType": "AWS::StepFunctions::StateMachine",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "arn:aws:states:us-east-1:000000000000:stateMachine:micro-test-local-diagnostic"
+        }
+      ]
+    },
+    "micro-test-local-pipe": {
+      "status": "CREATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "Role",
+          "ResourceType": "AWS::IAM::Role",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-pipe-Role-f0d25c57"
+        }
+      ]
+    },
+    "micro-test-local-api": {
+      "status": "CREATE_COMPLETE",
+      "resources": [
+        {
+          "LogicalResourceId": "Api",
+          "ResourceType": "AWS::ApiGateway::RestApi",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "f1exxhiccg"
+        },
+        {
+          "LogicalResourceId": "Diagnostic",
+          "ResourceType": "AWS::ApiGateway::Resource",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "cmbjwzhub0"
+        },
+        {
+          "LogicalResourceId": "Method",
+          "ResourceType": "AWS::ApiGateway::Method",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "f1exxhiccg-cmbjwzhub0-POST"
+        },
+        {
+          "LogicalResourceId": "Permission",
+          "ResourceType": "AWS::Lambda::Permission",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "micro-test-local-api-Permission-44978783"
+        },
+        {
+          "LogicalResourceId": "Deployment",
+          "ResourceType": "AWS::ApiGateway::Deployment",
+          "ResourceStatus": "CREATE_COMPLETE",
+          "PhysicalResourceId": "awmzhiyfdq"
+        }
+      ]
+    },
+    "micro-test-local-micro-api": "ABSENT"
+  },
+  "apiObservations": {
+    "network": {
+      "subnetCount": 8,
+      "associatedSubnetCount": 8,
+      "note": "Metadata only. Docker traffic does not prove VPC/SG enforcement."
+    },
+    "securityGroups": [
+      {
+        "id": "sg-2d1f35776e5ad5ec2",
+        "ingress": []
+      },
+      {
+        "id": "sg-69b22625bd8acb1f2",
+        "ingress": []
+      },
+      {
+        "id": "sg-717b52853be43883e",
+        "ingress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "UserIdGroupPairs": [
+              {
+                "UserId": "000000000000",
+                "GroupId": "sg-2d1f35776e5ad5ec2",
+                "VpcId": "vpc-c1bfaecba31f00683"
+              },
+              {
+                "UserId": "000000000000",
+                "GroupId": "sg-717b52853be43883e",
+                "VpcId": "vpc-c1bfaecba31f00683"
+              }
+            ],
+            "IpRanges": [],
+            "Ipv6Ranges": [],
+            "PrefixListIds": []
+          }
+        ]
+      }
+    ],
+    "rds": {
+      "DBInstanceStatus": "available",
+      "Engine": "postgres",
+      "EngineVersion": "16",
+      "Endpoint": {
+        "Address": "localhost.localstack.cloud",
+        "Port": 4510
+      },
+      "DBSubnetGroup": {
+        "DBSubnetGroupName": "subnetgroup-0518397e",
+        "DBSubnetGroupDescription": "Local database metadata",
+        "VpcId": "vpc-c1bfaecba31f00683",
+        "SubnetGroupStatus": "Complete",
+        "Subnets": [
+          {
+            "SubnetIdentifier": "subnet-56b498c46bfd96c34",
+            "SubnetAvailabilityZone": {
+              "Name": "us-east-1a"
+            },
+            "SubnetOutpost": {},
+            "SubnetStatus": "Active"
+          },
+          {
+            "SubnetIdentifier": "subnet-c7d9f07c232e035e6",
+            "SubnetAvailabilityZone": {
+              "Name": "us-east-1b"
+            },
+            "SubnetOutpost": {},
+            "SubnetStatus": "Active"
+          }
+        ],
+        "DBSubnetGroupArn": "arn:aws:rds:us-east-1:000000000000:subgrp:subnetgroup-0518397e",
+        "SupportedNetworkTypes": [
+          "IPV4"
+        ]
+      },
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "parameters-f2f1f9dd",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
+      "VpcSecurityGroups": [
+        {
+          "VpcSecurityGroupId": "sg-717b52853be43883e",
+          "Status": "active"
+        }
+      ],
+      "sqlVerified": false
+    },
+    "secret": "readable; local dummy credentials omitted",
+    "ecr": "000000000000.dkr.ecr.us-east-1.localhost.localstack.cloud:4566/micro-test-local-docs",
+    "s3": {
+      "bucket": "micro-test-local-documents",
+      "versioning": "Enabled"
+    },
+    "sqs": {
+      "RedrivePolicy": "{\"deadLetterTargetArn\": \"arn:aws:sqs:us-east-1:000000000000:micro-test-local-diagnostic-dlq\", \"maxReceiveCount\": 3}",
+      "VisibilityTimeout": "30"
+    },
+    "lambda": {
+      "State": "Active",
+      "Runtime": "python3.12",
+      "LoggingConfig": {
+        "LogFormat": "Text",
+        "LogGroup": "/micro-test-local/lambda/diagnostic"
+      },
+      "LastUpdateStatus": "Successful"
+    },
+    "lambdaLogStreams": 1,
+    "stateMachineStatus": "ACTIVE",
+    "pipe": {
+      "CurrentState": "STOPPED",
+      "DesiredState": "STOPPED",
+      "Source": "arn:aws:sqs:us-east-1:000000000000:micro-test-local-diagnostic",
+      "Target": "arn:aws:states:us-east-1:000000000000:stateMachine:micro-test-local-diagnostic"
+    },
+    "apiIntegration": {
+      "type": "AWS_PROXY",
+      "httpMethod": "POST",
+      "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:micro-test-local-diagnostic/invocations"
+    }
+  }
+}

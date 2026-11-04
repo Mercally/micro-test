@@ -28,10 +28,12 @@ management:
         enabled: true
 
 app:
+  lab:
+    purchases-enabled: ${LAB_PURCHASES_ENABLED:false}
   s3:
     region: ${AWS_REGION:us-east-1}
     endpoint: ${S3_ENDPOINT_URL:}
-    presign-endpoint: ${S3_PRESIGN_ENDPOINT_URL:${S3_ENDPOINT_URL:}}
+    presign-endpoint: ${S3_PRESIGN_ENDPOINT_URL:${app.s3.endpoint}}
     bucket: ${S3_BUCKET:docs-simulator}
   simulator:
     failures-before-success: ${SIMULATOR_FAILURES_BEFORE_SUCCESS:0}

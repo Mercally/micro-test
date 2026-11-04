@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Read-only publisher runtime connectivity proof, isolated from business processing.
+Parameters:
+  CodeKey: {Type: String}
+  DatabasePort: {Type: Number}
+Resources:
+  Logs:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: /aws/lambda/micro-test-local-business-probe, RetentionInDays: 7}
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      Policies:
+      - PolicyName: read-local-database
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: ['secretsmanager:GetSecretValue']
+            Resource: {Fn::ImportValue: micro-test-local-database-secret}
+          - Effect: Allow
+            Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
+            Resource: {Fn::GetAtt: [Logs, Arn]}
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: micro-test-local-business-probe
+      Runtime: python3.12
+      Handler: publisher.handler
+      Role: {Fn::GetAtt: [Role, Arn]}
+      Timeout: 30
+      MemorySize: 256
+      Code: {S3Bucket: micro-test-local-business-artifacts, S3Key: {Ref: CodeKey}}
+      Environment:
+        Variables:
+          LAB_AWS_ENDPOINT: http://localhost.localstack.cloud:4566
+          DATABASE_HOST: localhost.localstack.cloud
+          DATABASE_PORT: {Ref: DatabasePort}
+          DATABASE_SECRET_ARN: {Fn::ImportValue: micro-test-local-database-secret}
+      Tags: [{Key: Lab, Value: micro-test-local}]

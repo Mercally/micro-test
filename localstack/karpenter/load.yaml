@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: micro-test-local-practice
+  labels:
+    lab.micro-test.local/owner: karpenter-capd
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: real-workers
+  namespace: micro-test-local-practice
+  labels:
+    lab.micro-test.local/owner: karpenter-capd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: real-workers
+  template:
+    metadata:
+      labels:
+        app: real-workers
+    spec:
+      nodeSelector:
+        lab.micro-test.local/pool: elastic
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: real-workers
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: http
+          image: docker.io/library/busybox:1.37.0
+          command: [sh, -ec]
+          args:
+            - |
+              mkdir -p /tmp/www
+              printf 'real-container:%s\n' "$HOSTNAME" > /tmp/www/index.html
+              cat /tmp/www/index.html
+              exec httpd -f -p 8080 -h /tmp/www
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 64Mi

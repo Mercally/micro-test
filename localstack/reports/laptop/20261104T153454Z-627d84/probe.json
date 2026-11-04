@@ -1,0 +1,13 @@
+{
+  "endpoint": "http://100.100.154.68:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,6.6.114.1-microsoft-standard-WSL2,x86_64"
+  },
+  "command": "probe",
+  "checks": {},
+  "status": "FAIL",
+  "error": "{'function': 'business-probe', 'error': 'Unhandled', 'result': {'errorMessage': \"module 'scramp' has no attribute 'make_channel_binding'\", 'errorType': 'AttributeError', 'requestId': '6430f70b-b726-4d79-a422-1a21d9dfa440', 'stackTrace': ['  File \"/var/task/publisher.py\", line 16, in handler\\n    db = connect()\\n', '  File \"/var/task/publisher.py\", line 11, in connect\\n    return pg8000.dbapi.connect(host=os.environ[\"DATABASE_HOST\"], port=int(os.environ[\"DATABASE_PORT\"]),\\n', '  File \"/var/task/pg8000/dbapi.py\", line 211, in connect\\n    return Connection(\\n', '  File \"/var/task/pg8000/dbapi.py\", line 651, in __init__\\n    super().__init__(*args, **kwargs)\\n', '  File \"/var/task/pg8000/core.py\", line 320, in __init__\\n    self.channel_binding, self._usock = _make_socket(\\n', '  File \"/var/task/pg8000/core.py\", line 237, in _make_socket\\n    channel_binding = scramp.make_channel_binding(\\n']}}"
+}

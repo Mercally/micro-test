@@ -11,6 +11,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
+    @ExceptionHandler(PurchaseException.class)
+    ResponseEntity<Map<String, Object>> handlePurchase(PurchaseException exception) {
+        return ResponseEntity.status(exception.status()).body(Map.of(
+                "error", exception.code(), "message", exception.getMessage()));
+    }
+
     @ExceptionHandler(TransientWorkflowException.class)
     ResponseEntity<Map<String, Object>> handleTransient(TransientWorkflowException exception) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
