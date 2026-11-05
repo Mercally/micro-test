@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-05",
+  "scope": "Cleanup implementation; offline tests and lint only",
+  "command": "./localstack/lab verify",
+  "tests": {
+    "passed": 93,
+    "skipped": 3,
+    "cleanupTestsPassed": 18,
+    "skipReason": "PostgreSQL integration tests require an isolated database"
+  },
+  "cloudFormationLint": {
+    "errors": 0,
+    "existingWarnings": [
+      "W3010",
+      "W3691",
+      "W2501"
+    ]
+  },
+  "cliHelp": "PASS: ./localstack/lab cleanup --help",
+  "dockerMutationsExecuted": false,
+  "liveLaptopCleanup": "NOT_EXECUTED",
+  "freshWslBootstrap": "PENDING",
+  "limits": [
+    "Mocked Docker lifecycle, not runtime deletion proof",
+    "Unclassified helpers, shared images, BuildKit cache and host bind mounts require review",
+    "Windows virtual disk compaction is separate"
+  ]
+}

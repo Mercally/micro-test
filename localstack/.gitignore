@@ -2,6 +2,7 @@
 .state/
 __pycache__/
 *.pyc
+.lifecycle.lock
 
 .venv/
 .env

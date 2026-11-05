@@ -15,7 +15,7 @@ nativos de aceptación, SQL ni S3.
 
 ## Arranque consolidado desde cero
 
-**Preparado; aceptación completa PENDIENTE en WSL aislado.** No se reinició ni
+**Preparado; aceptación completa PENDIENTE en WSL limpio.** No se reinició ni
 redeplegó laboratorio existente para validar esta reorganización.
 
 | Comprobación | Estado |
@@ -23,6 +23,7 @@ redeplegó laboratorio existente para validar esta reorganización.
 | Contratos, descubrimiento/ownership, límites HPA y proyección de trazas | Pruebas offline; ejecutar `./localstack/lab verify` |
 | Rechazo de emulador ajeno, etapas obligatorias, fallo Karpenter, no exposición de token | Cubierto por tests de bootstrap |
 | Plantillas locales y ASL HTTP directo | Validación estática; no equivale a CFN CREATE_COMPLETE |
+| Cleanup Docker, helpers y volúmenes en WSL | PENDIENTE; script preparado, sin borrado real ejecutado |
 | Primera instalación íntegra en WSL limpio | PENDIENTE |
 | HPA con muestras reales de CPU/RAM en instalación nueva | PENDIENTE; obligatorio en `up` |
 | Karpenter → NodeClaim → worker real → HTTP | PENDIENTE; obligatorio en `up` |
@@ -43,12 +44,17 @@ contraseña ficticia local y versión PostgreSQL genérica `16`; no son plantill
 Definición HTTP contrastada por lectura contra workflow vigente: equivalente;
 Pipe RUNNING y Scheduler ENABLED. Ningún despliegue/reinicio del lab existente.
 
+Tras añadir cleanup: **93 pruebas PASS, 3 omitidas**, incluyendo 18 pruebas de
+protecciones y recuperación de borrado parcial con Docker simulado. CLI de ayuda
+y lint verificados. [Evidencia cleanup](evidence/cleanup-validation-20261105.json).
+No se ejecutó ninguna parada o eliminación real de recursos.
+
 Tests PostgreSQL requieren instancia/base aisladas; si faltan, se muestran como
 omitidos. No usar DB de compras para habilitarlos: limpian tablas de su base de test.
 
 ## Evidencia que falta recoger
 
-En motor Docker aislado, ejecutar `./localstack/lab up`; conservar `bootstrap.json`,
+En motor Docker aislado o limpiado deliberadamente según [CLEANUP.md](CLEANUP.md), ejecutar `./localstack/lab up`; conservar `bootstrap.json`,
 `node-test.json` y `purchase-test.json` generados en `localstack/reports/laptop/`.
 Después ejecutar ejercicios CPU/RAM y consolidación de [scaling/README.md](scaling/README.md).
 Para persistencia hace falta plan de pausa, snapshot de compra/PDF y reinicio

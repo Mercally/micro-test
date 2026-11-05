@@ -10,7 +10,7 @@ Karpenter AWS provisiona workers Docker reales en EKS local, con pool de prácti
 separado. No usa KWOK ni clúster alternativo. Micro permanece en nodos `general`;
 llevarlo al pool dinámico requiere resolver distribución de imagen y placement.
 
-## Laboratorio existente: conservarlo
+## Laboratorio existente y reconstrucción
 
 Laboratorio de laptop ya funciona. **No ejecutes `up` para migrarlo ni reinicies su
 emulador:** persistencia anterior está deshabilitada. Nuevo `up` se niega a adoptar
@@ -20,7 +20,12 @@ Usa `status`, `http`, `test`, `pause` y `resume` para operar lab existente.
 Para validar arranque desde cero conservando ese lab necesitas **otro motor Docker
 aislado**, por ejemplo otra máquina/VM de pruebas. Otra distribución WSL que comparte
 Docker Desktop NO es otro motor. No se lanza segundo emulador sobre mismo puerto,
-ni se detiene el primero para liberar espacio. Esta restricción protege tus datos.
+ni se detiene el primero automáticamente.
+
+Si decides descartar el lab actual y reconstruir en el mismo motor, usa la
+[guía de cleanup](CLEANUP.md): inventario revisable, parada, borrado explícito de
+datos y limpieza de archivos generados. Con persistencia anterior deshabilitada,
+incluso detenerlo puede perder estado. No ejecutes borrado sin revisar el plan.
 La nueva configuración usa los mismos nombres de recursos dentro de emulador nuevo.
 
 ## Primera corrida en entorno limpio
@@ -107,6 +112,7 @@ saleId; cópialo y ejecuta `Poll` hasta `COMPLETED`; abre PDF. JWT dura una hora
 Publisher corre cada minuto; ACCEPTED puede esperar en outbox antes de tener
 ExecutionArn. Bloques Transient/Permanent/Retry permiten practicar recuperación.
 
+- [Detener, borrar y reconstruir sin prune global](CLEANUP.md).
 - [Ejercicios de negocio y logs](business/PRACTICE.md).
 - [HPA, Karpenter, cola y carga](scaling/README.md).
 - [Aspire: seguimiento gráfico por saleId](observability/README.md).

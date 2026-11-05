@@ -52,7 +52,7 @@ def owned_emulator(containers):
             selected = item
         elif publishes or is_localstack:
             raise ValueError('Existing emulator/port 4566 preserved: ' + name
-                             + '. Run fresh bootstrap on an isolated Docker engine; do not stop the current lab.')
+                             + '. Use an isolated engine, or review localstack/CLEANUP.md before deliberately replacing this lab.')
     return selected
 
 
@@ -253,11 +253,12 @@ def bootstrap(args):
 
 @contextlib.contextmanager
 def exclusive_bootstrap():
-    path = ROOT / '.state/bootstrap.lock'
+    # Outside generated directories so cleanup cannot unlink an active lock.
+    path = ROOT / '.lifecycle.lock'
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w') as lock:
         try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError: raise ValueError('Another bootstrap is running in this checkout')
+        except BlockingIOError: raise ValueError('Another bootstrap/cleanup is running in this checkout')
         yield
 
 
@@ -272,6 +273,10 @@ def verify():
 
 
 def main():
+    if sys.argv[1:2] == ['cleanup']:
+        import cleanup
+        with exclusive_bootstrap(): cleanup.main(sys.argv[2:])
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['up', 'status', 'http', 'test', 'pause', 'resume', 'verify'])
     parser.add_argument('--endpoint', type=endpoint, default=ENDPOINT)
