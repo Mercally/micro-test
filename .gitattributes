@@ -1,0 +1,3 @@
+# Shell entry points must remain executable in WSL even with core.autocrlf=true.
+*.sh text eol=lf
+/localstack/lab text eol=lf

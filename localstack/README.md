@@ -122,6 +122,23 @@ no dependencia del flujo. Visor actual en Mac: <http://127.0.0.1:18888/traces>.
 
 ## Desarrollo y verificación
 
+### Error `env: bash\r: No such file or directory` en WSL
+
+El archivo `localstack/lab` tiene finales de línea Windows (CRLF). Desde raíz del
+checkout, dentro de WSL, convierte únicamente ese archivo y comprueba el lanzador:
+
+```bash
+sed -i 's/\r$//' localstack/lab
+./localstack/lab --help
+```
+
+Después repite el comando original. `.gitattributes` fija LF para este lanzador y
+scripts `.sh`, incluso con `core.autocrlf=true`. Actualizar las reglas no convierte
+necesariamente archivos ya presentes: aplica la corrección anterior a ese checkout.
+No hace falta cambiar configuración Git global ni recrear el laboratorio.
+
+### Verificación offline
+
 ```bash
 ./localstack/lab verify
 ```
