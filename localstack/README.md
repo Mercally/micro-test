@@ -44,10 +44,17 @@ Requisitos previos:
 - Clonar repo preferentemente en filesystem Linux WSL (`~/source/micro-test`),
   por rendimiento de build. Ejecutar desde raíz del checkout.
 
-Introduce token sin guardarlo en historial ni Git y lanza:
+Introduce token sin guardarlo en historial ni Git. Ejecuta **solo esta línea**,
+espera la pregunta, pega token y presiona Enter (entrada oculta):
 
 ```bash
 read -rsp 'LocalStack Auth Token: ' LOCALSTACK_AUTH_TOKEN
+```
+
+Después ejecuta el siguiente bloque. No pegues ambos bloques juntos: `read` puede
+consumir una línea de comandos pegada en lugar del token.
+
+```bash
 printf '\n'
 export LOCALSTACK_AUTH_TOKEN
 ./localstack/lab up
@@ -136,6 +143,30 @@ Después repite el comando original. `.gitattributes` fija LF para este lanzador
 scripts `.sh`, incluso con `core.autocrlf=true`. Actualizar las reglas no convierte
 necesariamente archivos ya presentes: aplica la corrección anterior a ese checkout.
 No hace falta cambiar configuración Git global ni recrear el laboratorio.
+
+### Timeout de licencia en primera etapa `emulator`
+
+`LocalStack Pro/license did not become ready` significa que no se confirmó
+LocalStack Pro activo antes del timeout; por sí solo no identifica la causa.
+Si el token apareció como `command not found`, vuelve a introducirlo usando
+los dos bloques separados del inicio. Si quedó visible en salida compartida,
+rótalo en LocalStack y utiliza el nuevo; no publiques logs con secretos.
+
+`up` reutiliza el contenedor existente y no actualiza sus variables. Para un
+**primer arranque fallido antes de `foundation`**, tras exportar token correcto,
+puedes recrear solo ese emulador nuevo y repetir arranque:
+
+```bash
+docker --host unix:///var/run/docker.sock compose -f localstack/compose.yaml \
+  up -d --force-recreate --no-deps localstack && \
+./localstack/lab up
+unset LOCALSTACK_AUTH_TOKEN
+```
+
+Recrea `micro-test-local-emulator` conservando volumen nombrado; no borra volúmenes.
+No uses esta recuperación para adoptar `localstack-aws` ni reiniciar un laboratorio
+ya desplegado. Si vuelve a fallar, revisar estado/logs del contenedor localmente
+antes de repetir; puede existir otro problema de licencia, red o inicio.
 
 ### Verificación offline
 
