@@ -78,6 +78,31 @@ class WslDiscoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify_cluster_config("micro-test-local-capd", config(), NETWORK, 43517)
 
+    def test_observed_docker_desktop_alias_normalized_with_tls_preserved(self):
+        name = "micro-test-local-b8d79075"
+        value = config()
+        value["clusters"][0]["cluster"]["server"] = "https://host.docker.internal:44855"
+        expected = copy.deepcopy(value)
+        expected["clusters"][0]["cluster"]["server"] = "https://127.0.0.1:44855"
+        verify_cluster_config(name, value, "k3d-" + name, 44855)
+        self.assertEqual(value, expected)
+
+    def test_docker_alias_requires_verified_binding_even_for_legacy_names(self):
+        legacy = "micro-test-local-eks"
+        for name, network, port, url in (
+                (NAME, NETWORK, None, "https://host.docker.internal:44855"),
+                (NAME, NETWORK, 44856, "https://host.docker.internal:44855"),
+                (legacy, None, 44855, "https://host.docker.internal:44855"),
+                (legacy, "foreign", 44855, "https://host.docker.internal:44855"),
+                (NAME, NETWORK, 44855, "https://host.docker.internal.example:44855"),
+                (NAME, NETWORK, 44855, "http://host.docker.internal:44855"),
+                (NAME, NETWORK, 44855, "https://user@host.docker.internal:44855"),
+                (NAME, NETWORK, 44855, "https://host.docker.internal:44855/path")):
+            value = config()
+            value["clusters"][0]["cluster"]["server"] = url
+            with self.subTest(name=name, network=network, port=port, url=url), self.assertRaises(ValueError):
+                verify_cluster_config(name, value, network, port)
+
     def test_runtime_uses_last_provider_id_and_owned_ec2_tags(self):
         lab, cluster, containers = runtime()
         result = wsl.runtime_binding(lab, "micro-test-local-eks", cluster, NETWORK, containers)

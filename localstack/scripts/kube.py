@@ -38,10 +38,14 @@ def verify_cluster_config(cluster, config, expected_network=None, expected_api_p
     if any(key in value for key in ("proxy-url", "tls-server-name", "certificate-authority")):
         raise ValueError("Proxy, alternate TLS name and external CA paths are not accepted")
     server = urlsplit(value["server"])
-    if (server.scheme != "https" or server.hostname not in ("127.0.0.1", "localhost", "0.0.0.0")
+    # Docker Desktop can advertise this alias in k3d's generated kubeconfig.
+    # Only accept it with a verified local LB binding; never resolve/use the alias.
+    docker_alias = (server.hostname == "host.docker.internal"
+                    and expected_network == "k3d-" + cluster and expected_api_port is not None)
+    if (server.scheme != "https" or (server.hostname not in ("127.0.0.1", "localhost", "0.0.0.0") and not docker_alias)
             or not server.port or server.username or server.password or server.query or server.fragment
             or server.path not in ("", "/")):
-        raise ValueError("Generated k3d kubeconfig is not a loopback TLS endpoint")
+        raise ValueError("Generated k3d kubeconfig is not a loopback TLS endpoint or verified Docker Desktop alias")
     if expected_api_port is not None and server.port != expected_api_port:
         raise ValueError("k3d kubeconfig port differs from observed Docker load balancer API port")
     value["server"] = f"https://127.0.0.1:{server.port}"

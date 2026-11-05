@@ -23,7 +23,7 @@ redeplegó laboratorio existente para validar esta reorganización.
 | Contratos, descubrimiento/ownership, límites HPA y proyección de trazas | Pruebas offline; ejecutar `./localstack/lab verify` |
 | Rechazo de emulador ajeno, etapas obligatorias, fallo Karpenter, no exposición de token | Cubierto por tests de bootstrap |
 | Plantillas locales y ASL HTTP directo | Validación estática; no equivale a CFN CREATE_COMPLETE |
-| Cleanup Docker, helpers y volúmenes en WSL | Intento bloqueado antes de modificar Docker; huella corregida, reintento WSL PENDIENTE |
+| Cleanup Docker, helpers y volúmenes en WSL | Usuario confirmó limpieza tras corregir huella; recibo final no revisado |
 | Primera instalación íntegra en WSL limpio | PENDIENTE |
 | HPA con muestras reales de CPU/RAM en instalación nueva | PENDIENTE; obligatorio en `up` |
 | Karpenter → NodeClaim → worker real → HTTP | PENDIENTE; obligatorio en `up` |
@@ -51,10 +51,26 @@ Salida WSL posterior confirmó pausa de triggers y rechazo de `purge` en primera
 comprobación de huella, antes de parar/eliminar contenedores. Reproducido offline
 al invertir orden de montajes; corregido con huella canónica y planes schema 2.
 Tras corrección pasan 32 tests de `localstack/tests` (21 de cleanup). Causa exacta
-en Docker y borrado completo requieren reintento WSL; no hay evidencia de éxito todavía.
+en Docker no se contrastó con inspect bruto; usuario confirmó después que limpieza
+terminó, sin aportar recibo final para revisión independiente.
 
 Tests PostgreSQL requieren instancia/base aisladas; si faltan, se muestran como
 omitidos. No usar DB de compras para habilitarlos: limpian tablas de su base de test.
+
+## Primer arranque WSL: avance y bloqueo observado
+
+Salida aportada por usuario: etapa `emulator` pasó; stacks network, eks, registry,
+database y storage alcanzaron CREATE_COMPLETE. Después falló comprobación local
+antes de instalar Istio/micro: k3d generó `https://host.docker.internal:44855` para
+`micro-test-local-b8d79075`. No era una prueba fallida de conexión TLS: validación
+rechazaba el alias antes de conectar.
+
+Corregido para aceptar ese alias exacto únicamente con red/puerto comprobados
+contra Docker/EKS y normalizar a `127.0.0.1`. Conserva CA y credenciales de cliente;
+no desactiva TLS. Regresión reproducida antes del cambio. Pasan 59 tests de negocio,
+WSL y lanzador; 3 PostgreSQL omitidos. [Evidencia](evidence/kubeconfig-alias-20261105.json).
+Reintento de conexión y arranque completo siguen PENDIENTES; CREATE_COMPLETE no
+certifica salud del clúster, aplicaciones ni flujo de compra.
 
 ## Evidencia que falta recoger
 

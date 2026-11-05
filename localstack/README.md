@@ -189,6 +189,8 @@ Scripts internos no constituyen caminos de instalación alternativos.
 HTTP Tasks locales usan red Docker y HTTP. No prueban acceso privado gestionado,
 VPC Link, TLS de entrada, IAM efectivo, latencia ni costos AWS. NLB conserva tipo
 network/internal; target local es NodePort, sin AWS Load Balancer Controller.
+Kubeconfig local normaliza `host.docker.internal` a loopback solo tras comprobar
+red y puerto publicados del clúster propio; conserva verificación TLS con CA de k3d.
 IPs de nodo pueden cambiar: `up` redescubre y valida target, no hay reconciliación
 continua. Lambda publisher y authorizer usan credenciales ficticias del emulador.
 
