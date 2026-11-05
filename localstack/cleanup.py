@@ -96,7 +96,10 @@ def name_of(item):
 
 def fingerprint(item):
     # State/IPs can change after stop. Identity, mounts and labels cannot.
-    value = {k: item.get(k) for k in ('Id', 'Created', 'Image', 'Mounts')}
+    value = {k: item.get(k) for k in ('Id', 'Created', 'Image')}
+    # Mount order is not configuration. Preserve every field but canonicalize the
+    # array as well as object keys so equivalent Docker inspect results agree.
+    value['Mounts'] = sorted(item.get('Mounts') or [], key=lambda mount: json.dumps(mount, sort_keys=True))
     value['name'] = name_of(item)
     value['labels'] = item['Config'].get('Labels') or {}
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
@@ -195,7 +198,7 @@ def make_plan(data, emulator_name, facts, extra_ids=(), extra_networks=(), extra
     binds = [{'container': name_of(c), 'source': m['Source'], 'destination': m['Destination']}
              for c in planned for m in c.get('Mounts', []) if m['Type'] == 'bind'
              and m['Source'] != '/var/run/docker.sock']
-    return {'schema': 1, 'engine': data['engine'], 'createdAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+    return {'schema': 2, 'engine': data['engine'], 'createdAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
             'emulator': emulator['Id'], 'persistenceConfigured': env.get('PERSISTENCE', env.get('LOCALSTACK_PERSISTENCE')) == '1',
             'facts': facts, 'containers': [{'id': c['Id'], 'name': name_of(c), 'image': c['Config']['Image'],
                           'fingerprint': fingerprint(c), 'reason': selected[c['Id']]} for c in planned],
@@ -208,8 +211,10 @@ def make_plan(data, emulator_name, facts, extra_ids=(), extra_networks=(), extra
 
 
 def check_plan(plan, data):
-    if plan.get('schema') != 1 or plan.get('engine') != data['engine']:
-        raise ValueError('Cleanup plan belongs to another engine or unsupported schema')
+    if plan.get('schema') != 2:
+        raise ValueError('Cleanup plan uses an old/unsupported fingerprint schema; regenerate with cleanup plan')
+    if plan.get('engine') != data['engine']:
+        raise ValueError('Cleanup plan belongs to another engine')
     if plan['emulator'] not in {c['id'] for c in plan['containers']}:
         raise ValueError('Plan must explicitly include selected emulator')
     current = {c['Id']: c for c in data['containers']}

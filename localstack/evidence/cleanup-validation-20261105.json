@@ -18,11 +18,18 @@
   },
   "cliHelp": "PASS: ./localstack/lab cleanup --help",
   "dockerMutationsExecuted": false,
-  "liveLaptopCleanup": "NOT_EXECUTED",
+  "liveLaptopCleanup": "ATTEMPT_BLOCKED_BEFORE_DOCKER_MUTATIONS: user output 2026-11-05T22:03:56Z; pause passed, initial container fingerprint check failed",
   "freshWslBootstrap": "PENDING",
   "limits": [
     "Mocked Docker lifecycle, not runtime deletion proof",
     "Unclassified helpers, shared images, BuildKit cache and host bind mounts require review",
     "Windows virtual disk compaction is separate"
-  ]
+  ],
+  "mountOrderFix": {
+    "regression": "Reproduced identical error offline by reversing otherwise identical Mounts",
+    "change": "Canonical mount ordering; schema 2 requires regenerated plan",
+    "verification": "32 tests passed in localstack/tests, including 21 cleanup tests",
+    "liveCause": "Compatible with reported failure; raw before/after Docker inspections were not available",
+    "wslRetry": "PENDING"
+  }
 }

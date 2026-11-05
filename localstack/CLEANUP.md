@@ -2,7 +2,8 @@
 
 Entrada única: `./localstack/lab cleanup`. Ejecutar desde raíz del checkout actualizado
 **dentro de WSL**, sobre `/var/run/docker.sock`. No usa AWS real ni Docker remoto.
-No se ha ejecutado cleanup real en laptop; pruebas offline cubren sus protecciones.
+Primer intento WSL se bloqueó antes de modificar Docker por diferencia de huella.
+Corregida comparación de orden de montajes; borrado completo sigue pendiente de reintento.
 
 **El laboratorio anterior tiene persistencia deshabilitada. Detener su emulador puede
 perder compras, SQL, PDFs y configuración. `purge` borra definitivamente los datos del
@@ -86,6 +87,12 @@ Espera fin de workflows activos. Cleanup rechaza operaciones mientras Pipe/Sched
 estén activos o queden ejecuciones RUNNING. Regenera plan del paso 1 después de pausar,
 repitiendo selecciones explícitas necesarias. Así incluye últimos runtimes Lambda.
 Si aparece otro contenedor antes de aplicar, operación se detiene para revisar de nuevo.
+
+Planes actuales usan `schema: 2`: la huella compara montajes sin depender de su
+orden, conservando todos sus campos. Si tienes un plan `schema: 1`, actualiza el
+checkout y regenera el plan mientras el emulador siga encendido. No cambies el
+número de schema a mano. La versión anterior podía informar `Container
+identity/configuration changed` al recibir los mismos montajes en distinto orden.
 
 Para detener sin eliminar volúmenes, revisa primero y luego aplica conscientemente:
 

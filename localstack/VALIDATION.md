@@ -23,7 +23,7 @@ redeplegó laboratorio existente para validar esta reorganización.
 | Contratos, descubrimiento/ownership, límites HPA y proyección de trazas | Pruebas offline; ejecutar `./localstack/lab verify` |
 | Rechazo de emulador ajeno, etapas obligatorias, fallo Karpenter, no exposición de token | Cubierto por tests de bootstrap |
 | Plantillas locales y ASL HTTP directo | Validación estática; no equivale a CFN CREATE_COMPLETE |
-| Cleanup Docker, helpers y volúmenes en WSL | PENDIENTE; script preparado, sin borrado real ejecutado |
+| Cleanup Docker, helpers y volúmenes en WSL | Intento bloqueado antes de modificar Docker; huella corregida, reintento WSL PENDIENTE |
 | Primera instalación íntegra en WSL limpio | PENDIENTE |
 | HPA con muestras reales de CPU/RAM en instalación nueva | PENDIENTE; obligatorio en `up` |
 | Karpenter → NodeClaim → worker real → HTTP | PENDIENTE; obligatorio en `up` |
@@ -47,7 +47,11 @@ Pipe RUNNING y Scheduler ENABLED. Ningún despliegue/reinicio del lab existente.
 Tras añadir cleanup: **93 pruebas PASS, 3 omitidas**, incluyendo 18 pruebas de
 protecciones y recuperación de borrado parcial con Docker simulado. CLI de ayuda
 y lint verificados. [Evidencia cleanup](evidence/cleanup-validation-20261105.json).
-No se ejecutó ninguna parada o eliminación real de recursos.
+Salida WSL posterior confirmó pausa de triggers y rechazo de `purge` en primera
+comprobación de huella, antes de parar/eliminar contenedores. Reproducido offline
+al invertir orden de montajes; corregido con huella canónica y planes schema 2.
+Tras corrección pasan 32 tests de `localstack/tests` (21 de cleanup). Causa exacta
+en Docker y borrado completo requieren reintento WSL; no hay evidencia de éxito todavía.
 
 Tests PostgreSQL requieren instancia/base aisladas; si faltan, se muestran como
 omitidos. No usar DB de compras para habilitarlos: limpian tablas de su base de test.

@@ -98,6 +98,29 @@ class CleanupTests(unittest.TestCase):
         self.data['containers'].append(new)
         with self.assertRaisesRegex(ValueError, 'New lab containers'): cleanup.check_plan(self.plan, self.data)
 
+    def test_mount_order_does_not_change_container_identity(self):
+        self.data['containers'][0]['Mounts'].append({
+            'Type': 'bind', 'Source': '/var/run/docker.sock', 'Destination': '/var/run/docker.sock', 'RW': True})
+        plan = cleanup.make_plan(self.data, 'localstack-aws', self.facts)
+        self.data['containers'][0]['Mounts'].reverse()
+        cleanup.check_plan(plan, self.data)
+
+    def test_mount_content_changes_still_block_before_docker_mutations(self):
+        for key, value in [('Name', 'another-volume'), ('Destination', '/another/path'), ('RW', False)]:
+            data = copy.deepcopy(self.data)
+            data['containers'][0]['Mounts'][0][key] = value
+            with self.subTest(key=key), patch.object(cleanup, 'inventory', return_value=data), patch.object(cleanup, 'run') as command:
+                with self.assertRaisesRegex(ValueError, 'identity/configuration changed'):
+                    cleanup.apply_plan(self.plan, 'purge', True)
+                command.assert_not_called()
+
+    def test_old_plan_requires_regeneration_before_mutations(self):
+        self.plan['schema'] = 1
+        with patch.object(cleanup, 'inventory', return_value=self.data), patch.object(cleanup, 'run') as command:
+            with self.assertRaisesRegex(ValueError, 'regenerate with cleanup plan'):
+                cleanup.apply_plan(self.plan, 'purge', True)
+            command.assert_not_called()
+
     def test_data_loss_acknowledgement_precedes_any_docker_operation(self):
         for mode in ('purge', 'stop'):
             with patch.object(cleanup, 'inventory') as inv:
