@@ -1,0 +1,44 @@
+{
+  "scope": "WSL discovery fix; offline regression, not laptop Kubernetes acceptance",
+  "observedFromUser": {
+    "k3dCLI": "v5.8.3",
+    "cluster": "micro-test-local-50dacdf7",
+    "network": "k3d-micro-test-local-50dacdf7",
+    "runningAgentContainers": 3,
+    "runningServerContainers": 1,
+    "kubectlAvailable": true,
+    "istioctlOnPATH": false
+  },
+  "checks": {
+    "wslRegression": {
+      "result": "PASS",
+      "tests": 7,
+      "command": "python -m unittest discover -s localstack/business/tests -p test_wsl.py -v"
+    },
+    "existingSafety": {
+      "result": "PASS",
+      "tests": 8,
+      "command": "python -m unittest discover -s localstack/scripts -p test_safety.py -v"
+    },
+    "existingContracts": {
+      "result": "PASS",
+      "tests": 3,
+      "command": "python -m unittest discover -s localstack/business/tests -p test_contracts.py -v"
+    },
+    "pythonSyntax": "PASS",
+    "diffWhitespace": "PASS"
+  },
+  "readOnlyGatewayCheck": {
+    "endpoint": "http://100.100.154.68:4566",
+    "ownedEKSName": "micro-test-local-eks",
+    "status": "ACTIVE",
+    "apiVersion": "1.34",
+    "certificateAuthorityPresent": true
+  },
+  "pending": [
+    "Actual k3d/EKS CA match in WSL",
+    "Actual Kubernetes version, node readiness and taints",
+    "Istio installation and full purchase E2E"
+  ],
+  "privacy": "Raw k3d output was not copied into repository; contains cluster tokens."
+}

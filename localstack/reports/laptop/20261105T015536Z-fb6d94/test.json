@@ -1,0 +1,233 @@
+{
+  "endpoint": "http://100.100.154.68:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,6.6.114.1-microsoft-standard-WSL2,x86_64"
+  },
+  "command": "test",
+  "checks": {
+    "auth_missing": {
+      "status": "PASS",
+      "http": 401
+    },
+    "auth_invalid": {
+      "status": "PASS",
+      "http": 401
+    },
+    "auth_expired": {
+      "status": "PASS",
+      "http": 401
+    },
+    "authenticated_periodic_end_to_end": {
+      "status": "PASS",
+      "sale": {
+        "saleId": "7b1fb745-4bc2-4f7a-98a8-d815e1e5bf3f",
+        "correlationId": "7b1fb745-4bc2-4f7a-98a8-d815e1e5bf3f",
+        "status": "COMPLETED",
+        "eventId": "fd10c7c8-7512-43b0-9087-3c2c8690fb62",
+        "generation": 1,
+        "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:02bfd17a-e9bc-444c-8b50-aee8fb658ad1",
+        "recoverable": false,
+        "updatedAt": "2026-11-05T01:56:10.622+00:00",
+        "outbox": [
+          {
+            "event_id": "fd10c7c8-7512-43b0-9087-3c2c8690fb62",
+            "generation": 1,
+            "published_at": "2026-11-05T01:56:00.071+00:00",
+            "sqs_message_id": "72c34c95-b765-4aa7-940a-94541d24ab43",
+            "attempts": 1
+          }
+        ],
+        "document": {
+          "document_id": "4ab89ad2-705f-4ec8-83a5-568b40de29ab",
+          "object_key": "sales/7b1fb745-4bc2-4f7a-98a8-d815e1e5bf3f/4ab89ad2-705f-4ec8-83a5-568b40de29ab.pdf",
+          "released_at": "2026-11-05T01:56:10.567+00:00"
+        }
+      },
+      "pdf": {
+        "key": "sales/7b1fb745-4bc2-4f7a-98a8-d815e1e5bf3f/4ab89ad2-705f-4ec8-83a5-568b40de29ab.pdf",
+        "sha256": "a52ce5c1e73a54d173aef8fb8a67bf382858b09355928ef2c8853ba204670d18",
+        "versionId": "AaGnMftAPshIz_vhE2fZYyDuGDpUtUmZ"
+      },
+      "executions": [
+        {
+          "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:02bfd17a-e9bc-444c-8b50-aee8fb658ad1",
+          "status": "SUCCEEDED",
+          "error": null,
+          "cause": null
+        }
+      ]
+    },
+    "reference_idempotency": {
+      "status": "PASS",
+      "saleId": "7b1fb745-4bc2-4f7a-98a8-d815e1e5bf3f",
+      "eventId": "fd10c7c8-7512-43b0-9087-3c2c8690fb62"
+    },
+    "transient": {
+      "status": "PASS",
+      "sale": {
+        "saleId": "cab17b3c-f1ae-4cc1-8860-33e7f4c90798",
+        "correlationId": "cab17b3c-f1ae-4cc1-8860-33e7f4c90798",
+        "status": "COMPLETED",
+        "eventId": "8dc72260-9576-4631-9232-876afb6539f6",
+        "generation": 1,
+        "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:3934d99f-0023-4226-8f3a-5002bfddab46",
+        "recoverable": false,
+        "updatedAt": "2026-11-05T01:57:15.155+00:00",
+        "outbox": [
+          {
+            "event_id": "8dc72260-9576-4631-9232-876afb6539f6",
+            "generation": 1,
+            "published_at": "2026-11-05T01:57:00.101+00:00",
+            "sqs_message_id": "de8b0f8f-2a53-44a1-a3bd-de442559b0a2",
+            "attempts": 1
+          }
+        ],
+        "document": {
+          "document_id": "b0400549-c9d6-42d4-8ba5-a42c526f5b4c",
+          "object_key": "sales/cab17b3c-f1ae-4cc1-8860-33e7f4c90798/b0400549-c9d6-42d4-8ba5-a42c526f5b4c.pdf",
+          "released_at": "2026-11-05T01:57:15.105+00:00"
+        }
+      },
+      "executions": [
+        {
+          "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:3934d99f-0023-4226-8f3a-5002bfddab46",
+          "status": "SUCCEEDED",
+          "error": null,
+          "cause": null
+        }
+      ],
+      "transientFailures": 2
+    },
+    "permanent_and_recovery": {
+      "status": "PASS",
+      "failed": {
+        "saleId": "6778b47d-f288-4c0a-8b8a-913fa20b1935",
+        "correlationId": "6778b47d-f288-4c0a-8b8a-913fa20b1935",
+        "status": "FAILED",
+        "eventId": "7a62e9e0-1391-4c61-ae16-75943fcfda82",
+        "generation": 1,
+        "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:37f8d6dd-e683-4b5e-90fb-099140acb698",
+        "error": "{\"Error\": \"PermanentStepError\", \"Cause\": \"{\\\"errorMessage\\\":\\\"HTTP 422: {\\\\\\\"message\\\\\\\":\\\\\\\"upload\\\\\\\",\\\\\\\"error\\\\\\\":\\\\\\\"LAB_PERMANENT_FAILURE\\\\\\\"}\\\",\\\"errorType\\\":\\\"PermanentStepError\\\",\\\"requestId\\\":\\\"f9ba9bc3-ac5e-4670-8203-288a6a3f5433\\\",\\\"stackTrace\\\":[\\\"  File \\\\\\\"/var/task/transport.py\\\\\\\", line 64, in handler\\\\n    raise error(message) from None\\\\n\\\"]}\"}",
+        "recoverable": true,
+        "updatedAt": "2026-11-05T01:58:10.746+00:00",
+        "outbox": [
+          {
+            "event_id": "7a62e9e0-1391-4c61-ae16-75943fcfda82",
+            "generation": 1,
+            "published_at": "2026-11-05T01:58:00.081+00:00",
+            "sqs_message_id": "f4776e27-5637-4486-a9e5-7d9bf8a3ba8a",
+            "attempts": 1
+          }
+        ]
+      },
+      "failedExecutions": [
+        {
+          "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:37f8d6dd-e683-4b5e-90fb-099140acb698",
+          "status": "FAILED",
+          "error": "PurchaseWorkflowFailed",
+          "cause": "Consult execution history and GET /purchases/{saleId}; retry explicitly after failure/lease expiry."
+        }
+      ],
+      "recovered": {
+        "saleId": "6778b47d-f288-4c0a-8b8a-913fa20b1935",
+        "correlationId": "6778b47d-f288-4c0a-8b8a-913fa20b1935",
+        "status": "COMPLETED",
+        "eventId": "5135c0f2-94e7-42bc-ad64-69f2befb2645",
+        "generation": 2,
+        "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:63f5783b-64bb-46e8-9ed5-79b545c709c2",
+        "recoverable": false,
+        "updatedAt": "2026-11-05T01:59:02.063+00:00",
+        "outbox": [
+          {
+            "event_id": "7a62e9e0-1391-4c61-ae16-75943fcfda82",
+            "generation": 1,
+            "published_at": "2026-11-05T01:58:00.081+00:00",
+            "sqs_message_id": "f4776e27-5637-4486-a9e5-7d9bf8a3ba8a",
+            "attempts": 1
+          },
+          {
+            "event_id": "5135c0f2-94e7-42bc-ad64-69f2befb2645",
+            "generation": 2,
+            "published_at": "2026-11-05T01:59:00.064+00:00",
+            "sqs_message_id": "a55464ac-9ad3-4785-b869-93f4ab8a96cd",
+            "attempts": 1
+          }
+        ],
+        "document": {
+          "document_id": "d4232950-338d-42ec-b0fe-aaa8feb09ca4",
+          "object_key": "sales/6778b47d-f288-4c0a-8b8a-913fa20b1935/d4232950-338d-42ec-b0fe-aaa8feb09ca4.pdf",
+          "released_at": "2026-11-05T01:59:02.004+00:00"
+        }
+      },
+      "recoveryExecutions": [
+        {
+          "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:63f5783b-64bb-46e8-9ed5-79b545c709c2",
+          "status": "SUCCEEDED",
+          "error": null,
+          "cause": null
+        }
+      ]
+    },
+    "publisher_crash_duplicate": {
+      "status": "PASS",
+      "sale": {
+        "saleId": "9dcb5615-f8c6-4fd2-8984-c10babad2431",
+        "correlationId": "9dcb5615-f8c6-4fd2-8984-c10babad2431",
+        "status": "COMPLETED",
+        "eventId": "3830d19f-bb10-41d1-89f4-e666e3d42d8e",
+        "generation": 1,
+        "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:8200afc5-de47-4c27-a00d-5a2c7d45532c",
+        "recoverable": false,
+        "updatedAt": "2026-11-05T01:59:05.864+00:00",
+        "outbox": [
+          {
+            "event_id": "3830d19f-bb10-41d1-89f4-e666e3d42d8e",
+            "generation": 1,
+            "published_at": "2026-11-05T01:59:11.062+00:00",
+            "sqs_message_id": "acb15f45-43c1-48f7-bc0e-a62317513712",
+            "attempts": 2
+          }
+        ],
+        "document": {
+          "document_id": "51518e69-48f6-4a17-a636-c5338e5b27a0",
+          "object_key": "sales/9dcb5615-f8c6-4fd2-8984-c10babad2431/51518e69-48f6-4a17-a636-c5338e5b27a0.pdf",
+          "released_at": "2026-11-05T01:59:05.808+00:00"
+        }
+      },
+      "pdf": {
+        "key": "sales/9dcb5615-f8c6-4fd2-8984-c10babad2431/51518e69-48f6-4a17-a636-c5338e5b27a0.pdf",
+        "sha256": "67872118de50a6a695dfb44c0229ce000989548f18637ac392908927bce32c5b",
+        "versionId": "AaGnMftDmwRPkQqeEhmVq3K0jofjk.xH"
+      },
+      "executions": [
+        {
+          "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:28595983-99de-4f57-a136-94a1c95d4ab2",
+          "status": "SUCCEEDED",
+          "error": null,
+          "cause": null
+        },
+        {
+          "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:8200afc5-de47-4c27-a00d-5a2c7d45532c",
+          "status": "SUCCEEDED",
+          "error": null,
+          "cause": null
+        }
+      ]
+    },
+    "invalid_event": {
+      "status": "PASS",
+      "executions": [
+        {
+          "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:9d0fb494-a9f6-4197-91c8-5709dc3e5ae1",
+          "status": "FAILED",
+          "error": "InvalidEvent",
+          "cause": "{\"errorMessage\":\"Unsupported event contract\",\"errorType\":\"InvalidEvent\",\"requestId\":\"4175481a-7f9e-4b87-b9fb-f21e2bf25ea1\",\"stackTrace\":[\"  File \\\"/var/task/transport.py\\\", line 44, in handler\\n    return normalize(event[\\\"input\\\"], event[\\\"owner\\\"])\\n\",\"  File \\\"/var/task/transport.py\\\", line 31, in normalize\\n    raise InvalidEvent(str(exc)) from None\\n\"]}"
+        }
+      ]
+    }
+  },
+  "status": "PASS"
+}

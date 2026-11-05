@@ -2,23 +2,53 @@
 """WSL-only bootstrap. No inherited Docker context or Kubernetes credentials."""
 import argparse
 import base64
+import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from urllib.parse import urlsplit
 
 import yaml
-from common import ROOT, PREFIX, Lab, endpoint_url, save
+from common import ROOT, PREFIX, REGION, ACCOUNT, Lab, endpoint_url, save
 
 NS = PREFIX + "general"
 ISTIO = "1.31.3"
 DOCKER = ["docker", "--host", "unix:///var/run/docker.sock"]
 MANIFESTS = ROOT / "kubernetes"
+
+
+def verify_cluster_config(cluster, config, expected_network=None, expected_api_port=None):
+    legacy = cluster.startswith(PREFIX + "eks")
+    generated = re.fullmatch(re.escape(PREFIX) + r"[0-9a-f]{8}", cluster) is not None
+    if not legacy and not (generated and expected_network == "k3d-" + cluster and expected_api_port):
+        raise ValueError("Generated k3d names require verified Docker network and API port")
+    if len(config.get("clusters", [])) != 1 or len(config.get("users", [])) != 1:
+        raise ValueError("Expected isolated single-cluster k3d kubeconfig")
+    value = config["clusters"][0]["cluster"]
+    if not base64.b64decode(value.get("certificate-authority-data", ""), validate=True).strip():
+        raise ValueError("Internal k3d certificate authority is required for TLS verification")
+    if any(key in value for key in ("proxy-url", "tls-server-name", "certificate-authority")):
+        raise ValueError("Proxy, alternate TLS name and external CA paths are not accepted")
+    server = urlsplit(value["server"])
+    if (server.scheme != "https" or server.hostname not in ("127.0.0.1", "localhost", "0.0.0.0")
+            or not server.port or server.username or server.password or server.query or server.fragment
+            or server.path not in ("", "/")):
+        raise ValueError("Generated k3d kubeconfig is not a loopback TLS endpoint")
+    if expected_api_port is not None and server.port != expected_api_port:
+        raise ValueError("k3d kubeconfig port differs from observed Docker load balancer API port")
+    value["server"] = f"https://127.0.0.1:{server.port}"
+    if value.get("insecure-skip-tls-verify"):
+        raise ValueError("Kubernetes TLS verification required")
+    if set(config["users"][0]["user"]) != {"client-certificate-data", "client-key-data"}:
+        raise ValueError("Use only local k3d certificate credentials")
 
 
 def run(cmd, input=None, check=True):
@@ -29,12 +59,61 @@ def run(cmd, input=None, check=True):
     return result
 
 
+def current_node_containers(cluster, roles=("server", "agent")):
+    """Read current node IDs; k3d helpers/LB are not Kubernetes nodes."""
+    for attempt in range(3):
+        ids = []
+        for role in roles:
+            ids.extend(run(DOCKER + ["ps", "-q", "--no-trunc", "--filter", "label=k3d.cluster=" + cluster,
+                                    "--filter", "label=k3d.role=" + role]).stdout.split())
+        if not ids:
+            raise ValueError("No running Docker nodes for selected k3d cluster")
+        nodes = []
+        for cid in sorted(set(ids)):
+            result = run(DOCKER + ["inspect", cid], check=False)
+            if result.returncode:
+                message = result.stderr.strip()
+                if "no such object:" in message.lower() or "no such container:" in message.lower():
+                    # Bounded retry of a new inventory, never reuse a stale ID list.
+                    break
+                raise RuntimeError("docker inspect failed: " + message)
+            node = json.loads(result.stdout)[0]
+            labels = node["Config"].get("Labels", {})
+            if labels.get("k3d.cluster") != cluster or labels.get("k3d.role") not in roles:
+                raise ValueError("Docker node identity changed during discovery")
+            if not node["State"]["Running"]:
+                break
+            nodes.append(node)
+        else:
+            return nodes
+    raise RuntimeError("Docker nodes changed during three discovery attempts; inspect cluster reconciliation")
+
+
+def nodeport_target(kube, network):
+    """Map a currently Ready Kubernetes node to a current private Docker address."""
+    nodes = json.loads(kube.call("get", "nodes", "-o", "json", "--request-timeout=30s").stdout)["items"]
+    ready_names = {n["metadata"]["name"] for n in nodes
+                   if any(c["type"] == "Ready" and c["status"] == "True"
+                          for c in n.get("status", {}).get("conditions", []))}
+    for container in current_node_containers(kube.cluster):
+        names = (container["Name"].lstrip("/"), container["Config"].get("Hostname"))
+        name = next((n for n in names if n in ready_names), None)
+        if not name:
+            continue
+        address = container["NetworkSettings"]["Networks"].get(network, {}).get("IPAddress", "")
+        if not address:
+            continue
+        parsed = ipaddress.ip_address(address)
+        if parsed.version != 4 or not parsed.is_private or parsed.is_loopback or parsed.is_unspecified:
+            raise ValueError("NodePort target must be an observed private Docker IPv4 address")
+        return {"node": name, "containerID": container["Id"], "ip": address, "network": network}
+    raise ValueError("Cannot map a currently Ready Kubernetes node to the selected Docker network; no serverlb fallback")
+
+
 class Kube:
-    def __init__(self, cluster):
+    def __init__(self, cluster, expected_network=None, expected_api_port=None):
         if sys.platform != "linux" or "microsoft" not in Path("/proc/sys/kernel/osrelease").read_text().lower():
             raise ValueError("Run this command in PC/WSL2; gateway 4566 does not provide Docker/Kubernetes access")
-        if not cluster.startswith(PREFIX + "eks"):
-            raise ValueError("k3d cluster must belong to micro-test-local-eks")
         os.environ.pop("DOCKER_CONTEXT", None)
         os.environ["DOCKER_HOST"] = "unix:///var/run/docker.sock"
         self.cluster = cluster
@@ -42,14 +121,7 @@ class Kube:
         info = json.loads(run(DOCKER + ["info", "--format", "{{json .}}"] ).stdout)
         if info.get("OSType") != "linux": raise ValueError("Linux Docker daemon required")
         config = yaml.safe_load(run(["k3d", "kubeconfig", "get", cluster]).stdout)
-        for value in config["clusters"]:
-            server = urlsplit(value["cluster"]["server"])
-            if server.scheme != "https" or server.hostname not in ("127.0.0.1", "localhost", "0.0.0.0"):
-                raise ValueError("Generated k3d kubeconfig is not a loopback TLS endpoint")
-            value["cluster"]["server"] = f"https://127.0.0.1:{server.port}"
-            if value["cluster"].get("insecure-skip-tls-verify"): raise ValueError("Kubernetes TLS verification required")
-        if any("exec" in u["user"] or "auth-provider" in u["user"] for u in config["users"]):
-            raise ValueError("Use only local k3d certificate credentials")
+        verify_cluster_config(cluster, config, expected_network, expected_api_port)
         path = ROOT / ".state/kubeconfig"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(yaml.safe_dump(config)); path.chmod(0o600)
@@ -64,6 +136,16 @@ class Kube:
 
     def apply_data(self, value):
         self.call("apply", "-f", "-", input=yaml.safe_dump(value))
+
+    def inspect(self):
+        nodes = json.loads(self.call("get", "nodes", "-o", "json", "--request-timeout=30s").stdout)["items"]
+        version = json.loads(self.call("version", "-o", "json", "--request-timeout=30s").stdout)
+        return {"version": version, "nodes": [
+            {"name": n["metadata"]["name"], "labRole": n["metadata"].get("labels", {}).get("lab-role"),
+             "lab": n["metadata"].get("labels", {}).get("lab"), "taints": n["spec"].get("taints", []),
+             "ready": any(c["type"] == "Ready" and c["status"] == "True" for c in n.get("status", {}).get("conditions", [])),
+             "kubeletVersion": n.get("status", {}).get("nodeInfo", {}).get("kubeletVersion")}
+            for n in nodes]}
 
     def ready(self):
         self.call("wait", "--for=condition=Ready", "nodes", "--all", "--timeout=180s")
@@ -93,14 +175,10 @@ def bootstrap(lab, kube, args):
     networks = container["NetworkSettings"]["Networks"]
     if args.docker_network not in networks: raise ValueError("LocalStack is not attached to requested Docker network")
     address = networks[args.docker_network]["IPAddress"]
-    import ipaddress
     if not ipaddress.ip_address(address).is_private: raise ValueError("Expected private Docker network address")
-    node_ids = run(DOCKER + ["ps", "-q", "--filter", "label=k3d.cluster=" + kube.cluster]).stdout.split()
-    if not node_ids: raise ValueError("No containers with selected k3d cluster label")
-    for node in node_ids:
-        info = json.loads(run(DOCKER + ["inspect", node]).stdout)[0]
+    for info in current_node_containers(kube.cluster):
         if args.docker_network not in info["NetworkSettings"]["Networks"]:
-            run(DOCKER + ["network", "connect", args.docker_network, node])
+            run(DOCKER + ["network", "connect", args.docker_network, info["Id"]])
     print("Building existing micro Dockerfile and importing local image", flush=True)
     run(DOCKER + ["build", "-t", "docs-simulator:local", str(ROOT.parent)])
     run(["k3d", "image", "import", "--cluster", kube.cluster, "docs-simulator:local"])
@@ -140,15 +218,10 @@ def bootstrap(lab, kube, args):
     for role in ("general","terceros","onprem"):
         kube.call("-n", PREFIX+role, "wait", "--for=condition=Ready", "pod/micro-test-local-scheduling", "--timeout=180s")
     security(kube)
-    # Choose an actual Docker node address, never a PC LAN address.
-    actual_nodes = {n["name"] for n in proof["nodes"]}
-    candidates = [json.loads(run(DOCKER + ["inspect", cid]).stdout)[0] for cid in node_ids]
-    candidates = [c for c in candidates if c["Config"].get("Hostname") in actual_nodes
-                  or c["Name"].lstrip("/") in actual_nodes]
-    if not candidates:
-        raise ValueError("Cannot map a real Kubernetes node to its Docker container; do not use the k3d serverlb as a NodePort target")
-    node = candidates[0]
-    node_ip = node["NetworkSettings"]["Networks"][args.docker_network]["IPAddress"]
+    # Build/import and probes can outlive/recreate Docker containers. Rediscover now.
+    print("Resolving current Ready node for Lambda/NodePort transport", flush=True)
+    proof["nodePortTarget"] = nodeport_target(kube, args.docker_network)
+    node_ip = proof["nodePortTarget"]["ip"]
     save(ROOT / ".state/micro-api-parameters.json", {"MicroBaseUrl":f"http://{node_ip}:31080"})
     publisher_host, publisher_port = host, port
     if args.database == "postgres":
@@ -169,15 +242,13 @@ def bootstrap(lab, kube, args):
 
 def security(kube):
     # Check actual K3s policy engine, not merely the existence of NetworkPolicy objects.
-    ids = run(DOCKER + ["ps", "-q", "--filter", "label=k3d.cluster=" + kube.cluster]).stdout.split()
     servers = []
-    for cid in ids:
-        info = json.loads(run(DOCKER + ["inspect",cid]).stdout)[0]
+    for info in current_node_containers(kube.cluster, roles=("server",)):
         command = " ".join(info["Config"].get("Cmd") or [])
         if "server" in command:
             if "--disable-network-policy" in command:
                 raise ValueError("K3s network policy controller is disabled; no policies applied")
-            servers.append(cid)
+            servers.append(info["Id"])
     if not servers: raise ValueError("Cannot verify embedded K3s/kube-router network policy controller")
     kube.apply("08-probes.yaml")
     kube.call("-n",NS,"wait","--for=condition=Ready","pod","-l","lab-probe=true","--timeout=180s")
@@ -215,31 +286,49 @@ def security(kube):
         kube.apply("05-mtls.yaml"); kube.apply("06-authorization.yaml"); kube.apply("07-network-policy.yaml")
 
 
+def registry_target(uri, proxy_endpoint):
+    # The hostname routes /v2/ to ECR. Replacing it with 127.0.0.1 yields 404.
+    host = f"{ACCOUNT}.dkr.ecr.{REGION}.localhost.localstack.cloud:4566"
+    if uri != host + "/" + PREFIX + "docs":
+        raise ValueError("ECR registry must match the verified local account, region and repository")
+    proxy = urlsplit(proxy_endpoint)
+    if (proxy.scheme not in ("http", "https") or proxy.netloc != host
+            or proxy.path not in ("", "/") or proxy.query or proxy.fragment):
+        raise ValueError("ECR authorization endpoint does not match the local repository")
+    return host
+
+
 def registry(lab, report_dir=None):
+    if (sys.platform != "linux" or "microsoft" not in Path("/proc/sys/kernel/osrelease").read_text().lower()
+            or lab.endpoint != "http://127.0.0.1:4566"):
+        raise ValueError("Registry proof must run in laptop WSL using http://127.0.0.1:4566")
     uri = lab.client("ecr").describe_repositories(repositoryNames=[PREFIX+"docs"])["repositories"][0]["repositoryUri"]
-    host, path = uri.split("/",1)
-    hostname = host.split(":")[0]
-    if not (hostname == "localhost.localstack.cloud" or hostname.endswith(".localhost.localstack.cloud") or hostname in ("localhost","127.0.0.1")) or path != PREFIX+"docs":
-        raise ValueError("ECR returned an unexpected registry; no Docker login attempted")
-    # Deliberate local transport mapping avoids remote DNS and Docker global insecure registries.
-    registry_host = "127.0.0.1:4566"
-    image = registry_host + "/" + path
-    token = lab.client("ecr").get_authorization_token()["authorizationData"][0]["authorizationToken"]
-    username,password = base64.b64decode(token).decode().split(":",1)
-    directory=ROOT/".state/docker-registry"
-    directory.mkdir(parents=True,exist_ok=True); directory.chmod(0o700)
-    docker=DOCKER+["--config",str(directory)]
-    try:
-        run(docker+["login",registry_host,"--username",username,"--password-stdin"],input=password)
-        run(docker+["tag","docs-simulator:local",image+":lab"])
-        run(docker+["push",image+":lab"])
-        digest=lab.client("ecr").describe_images(repositoryName=PREFIX+"docs",imageIds=[{"imageTag":"lab"}])["imageDetails"][0]["imageDigest"]
-        run(docker+["pull",image+"@"+digest])
-        save((report_dir or ROOT/"reports")/"ecr.json",{"status":"PASS","endpoint":lab.endpoint,"digest":digest,"transport":image,"note":"Push/pull on laptop. Does not test EKS kubelet IAM or registry auth."})
-        print("PASS: local ECR push and pull by digest",digest)
-    finally:
-        run(docker+["logout",registry_host],check=False)
-        shutil.rmtree(directory)
+    authorization = lab.client("ecr").get_authorization_token()["authorizationData"][0]
+    registry_host = registry_target(uri, authorization["proxyEndpoint"])
+    addresses = socket.getaddrinfo(registry_host.rsplit(":", 1)[0], 4566, type=socket.SOCK_STREAM)
+    if not addresses or any(not ipaddress.ip_address(a[4][0]).is_loopback for a in addresses):
+        raise ValueError("Local ECR hostname must resolve only to loopback in WSL; inspect DNS before retrying")
+    username,password = base64.b64decode(authorization["authorizationToken"], validate=True).decode().split(":",1)
+    parent = ROOT / ".state"
+    parent.mkdir(parents=True, exist_ok=True)
+    print("Testing local ECR registry: " + registry_host, flush=True)
+    # Isolated credentials; never delete a user's existing Docker config directory.
+    with tempfile.TemporaryDirectory(prefix="docker-registry-", dir=parent) as directory:
+        docker=DOCKER+["--config",directory]
+        try:
+            run(docker+["login",registry_host,"--username",username,"--password-stdin"],input=password)
+            run(docker+["tag","docs-simulator:local",uri+":lab"])
+            run(docker+["push",uri+":lab"])
+            digest=lab.client("ecr").describe_images(repositoryName=PREFIX+"docs",imageIds=[{"imageTag":"lab"}])["imageDetails"][0]["imageDigest"]
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                raise ValueError("ECR returned an invalid image digest")
+            run(docker+["pull",uri+"@"+digest])
+            report = report_dir or ROOT / "reports/laptop" / (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-ecr-" + uuid.uuid4().hex[:6])
+            save(report/"ecr.json",{"status":"PASS","endpoint":lab.endpoint,"digest":digest,"transport":uri,"note":"Push/pull on laptop. Does not test EKS kubelet IAM or registry auth."})
+            print("PASS: local ECR push and pull by digest",digest)
+            print("Report: " + str(report / "ecr.json"))
+        finally:
+            run(docker+["logout",registry_host],check=False)
 
 
 def stop(kube):
@@ -265,13 +354,15 @@ def main():
     lab=Lab(a.endpoint)
     if urlsplit(lab.endpoint).hostname not in ("127.0.0.1","localhost","::1"):
         raise ValueError("WSL bootstrap requires its loopback LocalStack endpoint")
+    if a.command=="registry":
+        registry(lab)
+        return
     kube=Kube(a.k3d_cluster)
     if a.command=="bootstrap":
         if not a.localstack_container or not a.presign_endpoint: raise ValueError("--localstack-container and --presign-endpoint required")
         bootstrap(lab,kube,a)
     elif a.command=="ready": print(json.dumps(kube.ready(),indent=2))
     elif a.command=="security": security(kube)
-    elif a.command=="registry": registry(lab, kube.report_dir)
     else: stop(kube)
 
 

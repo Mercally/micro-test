@@ -1,0 +1,23 @@
+{
+  "status": "FAIL",
+  "reason": "Publisher sent outbox while rule DISABLED",
+  "elapsed": 15,
+  "sale": {
+    "saleId": "ecfc8142-8156-4573-a342-dda0dc7e9d6a",
+    "correlationId": "ecfc8142-8156-4573-a342-dda0dc7e9d6a",
+    "status": "ACCEPTED",
+    "eventId": "6f479d96-4aae-4c46-9720-2bca83885aed",
+    "generation": 1,
+    "recoverable": false,
+    "updatedAt": "2026-11-05T01:52:07.590+00:00",
+    "outbox": [
+      {
+        "event_id": "6f479d96-4aae-4c46-9720-2bca83885aed",
+        "generation": 1,
+        "published_at": "2026-11-05T01:52:19.582+00:00",
+        "sqs_message_id": "1a8c09a2-a381-490f-899b-cfde95936b73",
+        "attempts": 1
+      }
+    ]
+  }
+}

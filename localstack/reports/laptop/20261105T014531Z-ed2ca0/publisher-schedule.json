@@ -1,0 +1,89 @@
+{
+  "rule": {
+    "Name": "micro-test-local-publisher",
+    "Arn": "arn:aws:events:us-east-1:000000000000:rule/micro-test-local-publisher",
+    "ScheduleExpression": "rate(1 minute)",
+    "State": "ENABLED",
+    "EventBusName": "default",
+    "CreatedBy": "000000000000",
+    "ResponseMetadata": {
+      "RequestId": "6a2b2522-81ce-4a10-a3d3-989e3fdd6755",
+      "HTTPStatusCode": 200,
+      "HTTPHeaders": {
+        "server": "TwistedWeb/26.4.0",
+        "date": "Thu, 05 Nov 2026 01:45:30 GMT",
+        "content-type": "application/x-amz-json-1.1",
+        "content-length": "234",
+        "x-amzn-requestid": "6a2b2522-81ce-4a10-a3d3-989e3fdd6755",
+        "x-localstack": "2026.10.4"
+      },
+      "RetryAttempts": 0
+    }
+  },
+  "targets": {
+    "Targets": [
+      {
+        "Id": "publisher",
+        "Arn": "arn:aws:lambda:us-east-1:000000000000:function:micro-test-local-publisher",
+        "Input": "{\"limit\":20}"
+      }
+    ],
+    "ResponseMetadata": {
+      "RequestId": "725c3adb-4eca-48ec-895b-39082f224a0b",
+      "HTTPStatusCode": 200,
+      "HTTPHeaders": {
+        "server": "TwistedWeb/26.4.0",
+        "date": "Thu, 05 Nov 2026 01:45:30 GMT",
+        "content-type": "application/x-amz-json-1.1",
+        "content-length": "145",
+        "x-amzn-requestid": "725c3adb-4eca-48ec-895b-39082f224a0b",
+        "x-localstack": "2026.10.4"
+      },
+      "RetryAttempts": 0
+    }
+  },
+  "logs": [
+    {
+      "logStreamName": "2026/11/05/[$LATEST]8d755dd9429e4dc0e8839e91667e6c57",
+      "timestamp": 1793843006963,
+      "message": "START RequestId: 238cf8e8-b0e2-45fa-9b59-1a616eda6b3e Version: $LATEST\n",
+      "ingestionTime": 1793843007154,
+      "eventId": "40004035824447857427619209535559181637588476535048634368"
+    },
+    {
+      "logStreamName": "2026/11/05/[$LATEST]8d755dd9429e4dc0e8839e91667e6c57",
+      "timestamp": 1793843006963,
+      "message": "END RequestId: 238cf8e8-b0e2-45fa-9b59-1a616eda6b3e\n",
+      "ingestionTime": 1793843007154,
+      "eventId": "40004035824447857427619209535559181637588476535048634369"
+    },
+    {
+      "logStreamName": "2026/11/05/[$LATEST]8d755dd9429e4dc0e8839e91667e6c57",
+      "timestamp": 1793843006963,
+      "message": "REPORT RequestId: 238cf8e8-b0e2-45fa-9b59-1a616eda6b3e\tDuration: 613.94 ms\tBilled Duration: 614 ms\tMemory Size: 256 MB\tMax Memory Used: 256 MB\tInit Duration: 858.60 ms\t\n",
+      "ingestionTime": 1793843007154,
+      "eventId": "40004035824447857427619209535559181637588476535048634370"
+    },
+    {
+      "logStreamName": "2026/11/05/[$LATEST]8d755dd9429e4dc0e8839e91667e6c57",
+      "timestamp": 1793843049616,
+      "message": "START RequestId: b1192631-a5d1-40e8-bbb1-59a3b233c313 Version: $LATEST\n",
+      "ingestionTime": 1793843049621,
+      "eventId": "40004036775641542380545878442821625902433497011878887424"
+    },
+    {
+      "logStreamName": "2026/11/05/[$LATEST]8d755dd9429e4dc0e8839e91667e6c57",
+      "timestamp": 1793843049616,
+      "message": "END RequestId: b1192631-a5d1-40e8-bbb1-59a3b233c313\n",
+      "ingestionTime": 1793843049621,
+      "eventId": "40004036775641542380545878442821625902433497011878887425"
+    },
+    {
+      "logStreamName": "2026/11/05/[$LATEST]8d755dd9429e4dc0e8839e91667e6c57",
+      "timestamp": 1793843049616,
+      "message": "REPORT RequestId: b1192631-a5d1-40e8-bbb1-59a3b233c313\tDuration: 47.90 ms\tBilled Duration: 48 ms\tMemory Size: 256 MB\tMax Memory Used: 256 MB\t\n",
+      "ingestionTime": 1793843049621,
+      "eventId": "40004036775641542380545878442821625902433497011878887426"
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "endpoint": "http://100.100.154.68:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,6.6.114.1-microsoft-standard-WSL2,x86_64"
+  },
+  "command": "test-pause",
+  "checks": {
+    "pause_resume": {
+      "status": "PASS",
+      "pausedSeconds": 75,
+      "pending": {
+        "saleId": "4cfb3fcf-1af8-42f3-94ae-404dafe47370",
+        "correlationId": "4cfb3fcf-1af8-42f3-94ae-404dafe47370",
+        "status": "ACCEPTED",
+        "eventId": "8aead9b6-bc2c-408c-9b89-554ae00b7162",
+        "generation": 1,
+        "recoverable": false,
+        "updatedAt": "2026-11-05T01:59:56.759+00:00",
+        "outbox": [
+          {
+            "event_id": "8aead9b6-bc2c-408c-9b89-554ae00b7162",
+            "generation": 1,
+            "attempts": 0
+          }
+        ]
+      },
+      "completed": {
+        "saleId": "4cfb3fcf-1af8-42f3-94ae-404dafe47370",
+        "correlationId": "4cfb3fcf-1af8-42f3-94ae-404dafe47370",
+        "status": "COMPLETED",
+        "eventId": "8aead9b6-bc2c-408c-9b89-554ae00b7162",
+        "generation": 1,
+        "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:43d3c464-9804-4dd1-98dd-61e9aec235c7",
+        "recoverable": false,
+        "updatedAt": "2026-11-05T02:02:04.810+00:00",
+        "outbox": [
+          {
+            "event_id": "8aead9b6-bc2c-408c-9b89-554ae00b7162",
+            "generation": 1,
+            "published_at": "2026-11-05T02:02:00.073+00:00",
+            "sqs_message_id": "0508f72c-096d-4068-8208-80abc8e487b3",
+            "attempts": 1
+          }
+        ],
+        "document": {
+          "document_id": "0f04e1c9-f412-4aee-a033-8f34da879c49",
+          "object_key": "sales/4cfb3fcf-1af8-42f3-94ae-404dafe47370/0f04e1c9-f412-4aee-a033-8f34da879c49.pdf",
+          "released_at": "2026-11-05T02:02:04.743+00:00"
+        }
+      },
+      "pdf": {
+        "key": "sales/4cfb3fcf-1af8-42f3-94ae-404dafe47370/0f04e1c9-f412-4aee-a033-8f34da879c49.pdf",
+        "sha256": "183eb7e31dedaef1d610b1bc5e2a1e5976c82235a5562f10f66ba8962ec1232a",
+        "versionId": "AaGnMftE25w5cpDGe.dd2K99TR6bCSf7"
+      },
+      "executions": [
+        {
+          "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:43d3c464-9804-4dd1-98dd-61e9aec235c7",
+          "status": "SUCCEEDED",
+          "error": null,
+          "cause": null
+        }
+      ]
+    }
+  },
+  "status": "PASS"
+}

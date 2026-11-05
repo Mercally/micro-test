@@ -2,6 +2,7 @@
 """Laptop-only purchase lab. Explicit endpoints, ownership checks, preserved data."""
 import argparse
 import base64
+from email.utils import parsedate_to_datetime
 import hashlib
 import hmac
 import json
@@ -57,7 +58,7 @@ def template(name):
 
 def validate():
     STATE.mkdir(parents=True, exist_ok=True)
-    for name in ("artifacts", "business", "runtime-probe"):
+    for name in ("artifacts", "business", "runtime-probe", "publisher-scheduler"):
         path = STATE / (name + ".json")
         save(path, template(name))
         subprocess.run([str(Path(sys.executable).parent / "cfn-lint"), str(path)], check=True)
@@ -128,6 +129,58 @@ def outputs(lab):
     return lab.outputs("business")
 
 
+def publisher_schedule(lab, enabled=None):
+    """Control Scheduler; detach the legacy rule whose disabled jobs still invoke locally."""
+    name = PREFIX + "publisher"
+    suffix = "business-scheduler"
+    stack = lab.stack(PREFIX + suffix)
+    if enabled is not None:
+        lab.outputs("business")  # Requires the tagged business stack.
+        detail = lab.client("cloudformation").describe_stack_resource(
+            StackName=PREFIX + "business", LogicalResourceId="Schedule")["StackResourceDetail"]
+        if detail["PhysicalResourceId"] != name or detail["ResourceType"] != "AWS::Events::Rule":
+            raise ValueError("Legacy publisher rule is not owned by the business stack")
+        events = lab.client("events")
+        rule = events.describe_rule(Name=name)
+        targets = events.list_targets_by_rule(Rule=name)["Targets"]
+        expected = {"Id": "publisher", "Arn": "arn:aws:lambda:us-east-1:000000000000:function:" + name,
+                    "Input": '{"limit":20}'}
+        if rule.get("ScheduleExpression") != "rate(1 minute)" or rule.get("EventPattern") or targets not in ([], [expected]):
+            raise ValueError("Legacy publisher configuration changed; preserve user changes")
+        if targets:
+            response = events.remove_targets(Rule=name, Ids=["publisher"])
+            if response["FailedEntryCount"]:
+                raise RuntimeError("Could not detach legacy publisher target")
+        events.disable_rule(Name=name)
+        if enabled and not stack:
+            deploy_stack(lab, suffix, template("publisher-scheduler"), {})
+            stack = lab.stack(PREFIX + suffix)
+    if not stack:
+        return {"State": "DISABLED", "scheduler": "ABSENT"}
+    # A separate stack keeps existing queues, application code and workflow untouched.
+    live = lab.client("cloudformation").get_template(StackName=PREFIX + suffix)["TemplateBody"]
+    if isinstance(live, str): live = yaml.safe_load(live)
+    if live != template("publisher-scheduler"):
+        raise ValueError("Publisher scheduler template differs; preserve user changes")
+    client = lab.client("scheduler")
+    current = client.get_schedule(Name=name, GroupName="default")
+    target = current["Target"]
+    if (current["ScheduleExpression"] != "rate(1 minute)" or current["FlexibleTimeWindow"] != {"Mode": "OFF"}
+            or target["Arn"] != "arn:aws:lambda:us-east-1:000000000000:function:" + name
+            or target["RoleArn"] != lab.outputs(suffix)["RoleArn"] or json.loads(target["Input"]) != {"limit": 20}):
+        raise ValueError("Publisher scheduler configuration differs from owned target")
+    if enabled is not None:
+        # UpdateSchedule resets omitted optional fields; preserve all supported settings.
+        params = {k: current[k] for k in ("Name", "GroupName", "ScheduleExpression", "ScheduleExpressionTimezone",
+                  "FlexibleTimeWindow", "Target", "StartDate", "EndDate", "Description", "KmsKeyArn", "ActionAfterCompletion") if k in current}
+        params["State"] = "ENABLED" if enabled else "DISABLED"
+        client.update_schedule(**params)
+        current = client.get_schedule(Name=name, GroupName="default")
+        if current["State"] != params["State"]:
+            raise RuntimeError("Publisher scheduler did not reach requested state")
+    return {"State": current["State"], "Arn": current["Arn"], "ScheduleExpression": current["ScheduleExpression"]}
+
+
 def invoke(lab, function, payload, expect_error=False):
     response = lab.client("lambda").invoke(FunctionName=PREFIX + function, Payload=json.dumps(payload).encode())
     result = json.loads(response["Payload"].read())
@@ -154,7 +207,7 @@ def pipe(lab, desired=None):
         raise ValueError("Unowned or modified business Pipe")
     if desired:
         # Installed provider needs UpdatePipe, including after CreatePipe(STOPPED).
-        pipes.update_pipe(Name=PIPE, DesiredState=desired)
+        pipes.update_pipe(Name=PIPE, RoleArn=out["PipeRoleArn"], DesiredState=desired)
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             current = pipes.describe_pipe(Name=PIPE)
@@ -167,6 +220,8 @@ def pipe(lab, desired=None):
 def deploy(lab, args):
     if lab.stack(PREFIX + "micro-api"):
         raise ValueError("Legacy micro-api exposes internal routes without auth; retire that optional API before deploying business")
+    if lab.stack(PREFIX + "business"):
+        publisher_schedule(lab, False)
     if not args.runtime:
         raise ValueError("--runtime localstack/.state/business-runtime.json from WSL bootstrap required")
     runtime = json.loads(Path(args.runtime).read_text())
@@ -193,6 +248,7 @@ def deploy(lab, args):
     body["Resources"]["Stage"]["Properties"]["DeploymentId"] = {"Ref": deployment}
     deploy_stack(lab, "business", body, parameters | {"CodeKey": key}, args.update)
     pipe(lab, "STOPPED")
+    publisher_schedule(lab, False)
     for function in ("publisher", "transport", "authorizer"):
         lab.client("lambda").get_waiter("function_active_v2").wait(FunctionName=PREFIX + function)
         lab.client("lambda").get_waiter("function_updated_v2").wait(FunctionName=PREFIX + function)
@@ -215,8 +271,11 @@ def probe(lab, update=False):
 
 
 def token(lab, kind="valid"):
-    key = json.loads(lab.client("secretsmanager").get_secret_value(SecretId=outputs(lab)["AuthSecretArn"])["SecretString"])["key"]
-    now = int(time.time())
+    response = lab.client("secretsmanager").get_secret_value(SecretId=outputs(lab)["AuthSecretArn"])
+    key = json.loads(response["SecretString"])["key"]
+    # Sign against the emulator clock, shared by its Lambda runtimes. Mac/WSL
+    # clock skew must not intermittently put iat in the authorizer's future.
+    now = int(parsedate_to_datetime(response["ResponseMetadata"]["HTTPHeaders"]["date"]).timestamp())
     exp = now + 3600 if kind != "expired" else now - 1
     iat = now if kind != "expired" else now - 3600
     def encode(value): return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).decode().rstrip("=")
@@ -315,7 +374,7 @@ def wait_executions(lab, event_id, expected="SUCCEEDED", minimum=1):
 def smoke(lab, proof):
     bearer = token(lab)
     assert pipe(lab)["CurrentState"] == "RUNNING", "Run start first"
-    assert lab.client("events").describe_rule(Name=PREFIX + "publisher")["State"] == "ENABLED"
+    assert publisher_schedule(lab)["State"] == "ENABLED"
     for kind in ("missing", "invalid", "expired"):
         code, value = http_request(lab, "/purchases/" + str(uuid.uuid4()), bearer=None if kind == "missing" else token(lab, kind))
         assert code in (401, 403), (kind, code, value)
@@ -335,7 +394,8 @@ def smoke(lab, proof):
     recovered = wait_sale(lab, bearer, transient["saleId"])
     transient_runs = wait_executions(lab, transient["eventId"])
     history = lab.client("stepfunctions").get_execution_history(executionArn=transient_runs[0]["executionArn"], maxResults=1000)["events"]
-    failures = [e for e in history if e.get("type") in ("TaskFailed", "LambdaFunctionFailed") and "TransientStepError" in json.dumps(e)]
+    failures = [e for e in history if e.get("type") in ("TaskFailed", "LambdaFunctionFailed")
+                and "TransientStepError" in json.dumps(e, default=str)]
     assert len(failures) >= 2, "Controlled transient failures were not observed in execution history"
     proof["transient"] = {"status": "PASS", "sale": recovered, "executions": transient_runs, "transientFailures": len(failures)}
     _, permanent = purchase(lab, bearer, "upload:permanent:1")
@@ -347,8 +407,7 @@ def smoke(lab, proof):
     recovered = wait_sale(lab, bearer, failed["saleId"])
     proof["permanent_and_recovery"] = {"status": "PASS", "failed": failed, "failedExecutions": failed_runs,
                                         "recovered": recovered, "recoveryExecutions": wait_executions(lab, retry["eventId"])}
-    events = lab.client("events")
-    events.disable_rule(Name=PREFIX + "publisher")
+    publisher_schedule(lab, False)
     try:
         _, crash = purchase(lab, bearer)
         result = invoke(lab, "publisher", {"eventId": crash["eventId"], "crashAfterSendEventId": crash["eventId"]}, expect_error=True)
@@ -361,7 +420,7 @@ def smoke(lab, proof):
         runs = wait_executions(lab, crash["eventId"], minimum=2)
         proof["publisher_crash_duplicate"] = {"status": "PASS", "sale": done, "pdf": pdf_proof(lab, done), "executions": runs}
     finally:
-        events.enable_rule(Name=PREFIX + "publisher")
+        publisher_schedule(lab, True)
     invalid_id = str(uuid.uuid4())
     lab.client("sqs").send_message(QueueUrl=outputs(lab)["QueueUrl"], MessageBody=json.dumps({"version": 99, "eventId": invalid_id}))
     deadline = time.monotonic() + 60
@@ -401,9 +460,31 @@ def snapshot(lab, sale_id, target, restore=False):
     return {"snapshot": str(target), "persistence": "PENDIENTE: verify after controlled restart"}
 
 
+def test_pause_resume(lab):
+    if pipe(lab)["CurrentState"] != "RUNNING" or publisher_schedule(lab)["State"] != "ENABLED":
+        raise ValueError("Run start before testing publisher pause/resume")
+    bearer = token(lab)
+    publisher_schedule(lab, False)
+    try:
+        _, accepted = purchase(lab, bearer)
+        print("Checking 75 seconds without publishing: " + accepted["saleId"], flush=True)
+        deadline = time.monotonic() + 75
+        while True:
+            code, pending = http_request(lab, "/purchases/" + accepted["saleId"], bearer=bearer)
+            assert code == 200 and pending["status"] == "ACCEPTED", (code, pending)
+            assert pending["outbox"][0].get("published_at") is None, pending
+            if time.monotonic() >= deadline: break
+            time.sleep(5)
+    finally:
+        publisher_schedule(lab, True)
+    completed = wait_sale(lab, bearer, accepted["saleId"])
+    return {"status": "PASS", "pausedSeconds": 75, "pending": pending, "completed": completed,
+            "pdf": pdf_proof(lab, completed), "executions": wait_executions(lab, accepted["eventId"])}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "package", "status", "probe", "deploy", "start", "stop", "publish", "http", "test", "iam", "dlq", "snapshot", "verify-snapshot"])
+    parser.add_argument("command", choices=["validate", "package", "status", "probe", "deploy", "start", "stop", "pause-publisher", "resume-publisher", "publish", "http", "test", "test-pause", "iam", "dlq", "snapshot", "verify-snapshot"])
     parser.add_argument("--endpoint", type=endpoint)
     parser.add_argument("--runtime")
     parser.add_argument("--update", action="store_true")
@@ -422,10 +503,11 @@ def main():
         if args.command == "status":
             result["persistence"] = lab.health.get("features")
             result["stacks"] = {suffix: (lab.stack(PREFIX + suffix) or {}).get("StackStatus", "ABSENT")
-                                for suffix in ("network", "eks", "registry", "database", "storage", "queues", "lambda", "workflow", "pipe", "api", "micro-api", "business-artifacts", "business-probe", "business")}
+                                for suffix in ("network", "eks", "registry", "database", "storage", "queues", "lambda", "workflow", "pipe", "api", "micro-api", "business-artifacts", "business-probe", "business", "business-scheduler")}
             if lab.stack(PREFIX + "business"):
                 result["outputs"] = outputs(lab)
                 result["pipe"] = pipe(lab)
+                result["publisherSchedule"] = publisher_schedule(lab)
         elif args.command == "deploy": deploy(lab, args)
         elif args.command == "probe": result["result"] = probe(lab, args.update)
         elif args.command == "start":
@@ -433,10 +515,12 @@ def main():
                 raise ValueError("Application outbox schema missing; complete WSL bootstrap")
             invoke(lab, "transport", {"operation": "health"})
             pipe(lab, "RUNNING")
-            lab.client("events").enable_rule(Name=PREFIX + "publisher")
+            publisher_schedule(lab, True)
         elif args.command == "stop":
-            lab.client("events").disable_rule(Name=PREFIX + "publisher")
+            publisher_schedule(lab, False)
             pipe(lab, "STOPPED")
+        elif args.command in ("pause-publisher", "resume-publisher"):
+            result["publisherSchedule"] = publisher_schedule(lab, args.command == "resume-publisher")
         elif args.command == "publish":
             event = {"limit": 20}
             if args.event_id: event["eventId"] = str(uuid.UUID(args.event_id))
@@ -446,6 +530,7 @@ def main():
             result["result"] = invoke(lab, "publisher", event, args.crash_after_send)
         elif args.command == "http": result["result"] = http_file(lab)
         elif args.command == "test": smoke(lab, result["checks"])
+        elif args.command == "test-pause": result["checks"]["pause_resume"] = test_pause_resume(lab)
         elif args.command == "iam":
             import checks
             checks.iam(lab, report)

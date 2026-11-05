@@ -1,0 +1,14 @@
+{
+  "source": "User-provided WSL wsl.py --repair-lambda-network output; original detailed reports remain on laptop",
+  "businessStack": "UPDATE_COMPLETE",
+  "runtimeHealth": "PASS",
+  "node": "k3d-micro-test-local-50dacdf7-agent-micro-test-local-onpre-0-0",
+  "network": "bridge",
+  "MicroBaseUrl": "http://172.17.0.3:31080",
+  "RuntimeEndpoint": "http://172.17.0.2:4566",
+  "DatabaseHost": "172.17.0.2",
+  "DatabasePort": "4510",
+  "databaseMode": "rds",
+  "persistence": "disabled",
+  "purchaseFlow": "Not tested by this WSL command"
+}

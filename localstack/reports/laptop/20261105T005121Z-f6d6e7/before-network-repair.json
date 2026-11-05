@@ -1,0 +1,15 @@
+{
+  "endpoint": "http://100.100.154.68:4566",
+  "businessStack": "CREATE_COMPLETE",
+  "pipe": "STOPPED",
+  "publisherRule": "DISABLED",
+  "persistence": {
+    "persistence": "disabled"
+  },
+  "parameters": {
+    "MicroBaseUrl": "http://172.19.0.7:31080",
+    "RuntimeEndpoint": "http://172.19.0.5:4566",
+    "DatabaseHost": "172.19.0.5",
+    "DatabasePort": "4510"
+  }
+}

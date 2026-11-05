@@ -1,0 +1,162 @@
+{
+  "source": "User-provided WSL network_inspect.py output; original report remains on laptop",
+  "inspection": {
+    "status": "INSPECTED",
+    "endpoint": "http://127.0.0.1:4566",
+    "health": {
+      "publisher": {
+        "status": "FAIL",
+        "errorType": "AssertionError"
+      },
+      "transport": {
+        "status": "FAIL",
+        "errorType": "AssertionError"
+      }
+    },
+    "containers": [
+      {
+        "name": "localstack-aws-lambda-micro-test-local-transport-045f30c2ba7103ce86bf48ad941da029",
+        "function": "micro-test-local-transport",
+        "cluster": null,
+        "running": true,
+        "networkMode": "bridge",
+        "networks": {
+          "bridge": {
+            "ipv4": "172.17.0.4",
+            "networkId": "a554ee65f6e9e3ff36e1d88c209fdf39874958e7b0edbeaa3b409b6068c6d8b0"
+          }
+        },
+        "configuration": {
+          "LAB_AWS_ENDPOINT": "http://172.19.0.5:4566",
+          "MICRO_BASE_URL": "http://172.19.0.7:31080"
+        }
+      },
+      {
+        "name": "localstack-aws-lambda-micro-test-local-publisher-8f2dd58b31722afa1e508e5f98f4f31e",
+        "function": "micro-test-local-publisher",
+        "cluster": null,
+        "running": true,
+        "networkMode": "bridge",
+        "networks": {
+          "bridge": {
+            "ipv4": "172.17.0.3",
+            "networkId": "a554ee65f6e9e3ff36e1d88c209fdf39874958e7b0edbeaa3b409b6068c6d8b0"
+          }
+        },
+        "configuration": {
+          "DATABASE_HOST": "172.19.0.5",
+          "DATABASE_PORT": "4510",
+          "LAB_AWS_ENDPOINT": "http://172.19.0.5:4566"
+        }
+      },
+      {
+        "name": "k3d-micro-test-local-50dacdf7-agent-micro-test-local-terce-0-0",
+        "function": null,
+        "cluster": "micro-test-local-50dacdf7",
+        "running": true,
+        "networkMode": "bridge",
+        "networks": {
+          "k3d-micro-test-local-50dacdf7": {
+            "ipv4": "172.19.0.8",
+            "networkId": "0bef06825502bbd84d975105c17ee919ddc6f80d1075d6e325fbf7d98e6e5251"
+          },
+          "localstack-ec2-link-local": {
+            "ipv4": "172.21.0.5",
+            "networkId": "d4a61630693fcf523857ef6a7fe58b847e60d823f7466389995cbbe0fb80407e"
+          }
+        },
+        "configuration": {}
+      },
+      {
+        "name": "k3d-micro-test-local-50dacdf7-agent-micro-test-local-onpre-0-0",
+        "function": null,
+        "cluster": "micro-test-local-50dacdf7",
+        "running": true,
+        "networkMode": "bridge",
+        "networks": {
+          "k3d-micro-test-local-50dacdf7": {
+            "ipv4": "172.19.0.7",
+            "networkId": "0bef06825502bbd84d975105c17ee919ddc6f80d1075d6e325fbf7d98e6e5251"
+          },
+          "localstack-ec2-link-local": {
+            "ipv4": "172.21.0.4",
+            "networkId": "d4a61630693fcf523857ef6a7fe58b847e60d823f7466389995cbbe0fb80407e"
+          }
+        },
+        "configuration": {}
+      },
+      {
+        "name": "k3d-micro-test-local-50dacdf7-agent-micro-test-local-gener-0-0",
+        "function": null,
+        "cluster": "micro-test-local-50dacdf7",
+        "running": true,
+        "networkMode": "bridge",
+        "networks": {
+          "k3d-micro-test-local-50dacdf7": {
+            "ipv4": "172.19.0.6",
+            "networkId": "0bef06825502bbd84d975105c17ee919ddc6f80d1075d6e325fbf7d98e6e5251"
+          },
+          "localstack-ec2-link-local": {
+            "ipv4": "172.21.0.3",
+            "networkId": "d4a61630693fcf523857ef6a7fe58b847e60d823f7466389995cbbe0fb80407e"
+          }
+        },
+        "configuration": {}
+      },
+      {
+        "name": "k3d-micro-test-local-50dacdf7-serverlb",
+        "function": null,
+        "cluster": "micro-test-local-50dacdf7",
+        "running": true,
+        "networkMode": "bridge",
+        "networks": {
+          "k3d-micro-test-local-50dacdf7": {
+            "ipv4": "172.19.0.4",
+            "networkId": "0bef06825502bbd84d975105c17ee919ddc6f80d1075d6e325fbf7d98e6e5251"
+          }
+        },
+        "configuration": {}
+      },
+      {
+        "name": "k3d-micro-test-local-50dacdf7-server-0",
+        "function": null,
+        "cluster": "micro-test-local-50dacdf7",
+        "running": true,
+        "networkMode": "bridge",
+        "networks": {
+          "k3d-micro-test-local-50dacdf7": {
+            "ipv4": "172.19.0.3",
+            "networkId": "0bef06825502bbd84d975105c17ee919ddc6f80d1075d6e325fbf7d98e6e5251"
+          }
+        },
+        "configuration": {}
+      },
+      {
+        "name": "localstack-aws",
+        "function": null,
+        "cluster": null,
+        "running": true,
+        "networkMode": "bridge",
+        "networks": {
+          "bridge": {
+            "ipv4": "172.17.0.2",
+            "networkId": "a554ee65f6e9e3ff36e1d88c209fdf39874958e7b0edbeaa3b409b6068c6d8b0"
+          },
+          "k3d-micro-test-local-50dacdf7": {
+            "ipv4": "172.19.0.5",
+            "networkId": "0bef06825502bbd84d975105c17ee919ddc6f80d1075d6e325fbf7d98e6e5251"
+          },
+          "localstack-ec2-link-local": {
+            "ipv4": "172.21.0.2",
+            "networkId": "d4a61630693fcf523857ef6a7fe58b847e60d823f7466389995cbbe0fb80407e"
+          }
+        },
+        "configuration": {}
+      }
+    ],
+    "missingFunctionContainers": [
+      "micro-test-local-authorizer"
+    ],
+    "note": "No network changes, restarts, purchase requests or trigger activation. Missing runtimes may be idle."
+  }
+}

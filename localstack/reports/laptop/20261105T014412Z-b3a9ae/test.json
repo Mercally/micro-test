@@ -1,0 +1,26 @@
+{
+  "endpoint": "http://100.100.154.68:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,6.6.114.1-microsoft-standard-WSL2,x86_64"
+  },
+  "command": "test",
+  "checks": {
+    "auth_missing": {
+      "status": "PASS",
+      "http": 401
+    },
+    "auth_invalid": {
+      "status": "PASS",
+      "http": 401
+    },
+    "auth_expired": {
+      "status": "PASS",
+      "http": 401
+    }
+  },
+  "status": "FAIL",
+  "error": "Sale aa896969-faa0-455e-b8bc-d5759683e58b did not reach COMPLETED"
+}

@@ -1,0 +1,40 @@
+{
+  "ResponseMetadata": {
+    "RequestId": "d1355a71-46da-4f5b-9458-053dd4a499da",
+    "HTTPStatusCode": 200,
+    "HTTPHeaders": {
+      "server": "TwistedWeb/26.4.0",
+      "date": "Wed, 04 Nov 2026 23:16:17 GMT",
+      "content-type": "text/plain; charset=utf-8",
+      "content-length": "759",
+      "x-amzn-requestid": "d1355a71-46da-4f5b-9458-053dd4a499da",
+      "x-amz-request-id": "d1355a71-46da-4f5b-9458-053dd4a499da",
+      "x-localstack": "2026.10.4"
+    },
+    "RetryAttempts": 0
+  },
+  "Arn": "arn:aws:pipes:us-east-1:000000000000:pipe/micro-test-local-purchases",
+  "Name": "micro-test-local-purchases",
+  "DesiredState": "STOPPED",
+  "CurrentState": "STOPPED",
+  "StateReason": "USER_INITIATED",
+  "Source": "arn:aws:sqs:us-east-1:000000000000:micro-test-local-purchases",
+  "SourceParameters": {
+    "SqsQueueParameters": {
+      "BatchSize": 1
+    }
+  },
+  "EnrichmentParameters": {},
+  "Target": "arn:aws:states:us-east-1:000000000000:stateMachine:micro-test-local-purchases",
+  "TargetParameters": {
+    "StepFunctionStateMachineParameters": {
+      "InvocationType": "FIRE_AND_FORGET"
+    }
+  },
+  "RoleArn": "arn:aws:iam::000000000000:role/micro-test-local-business-PipeRole-2de88f0d",
+  "Tags": {
+    "Lab": "micro-test-local"
+  },
+  "CreationTime": "2026-11-04 17:14:04.337127-06:00",
+  "LastModifiedTime": "2026-11-04 17:16:15.735162-06:00"
+}

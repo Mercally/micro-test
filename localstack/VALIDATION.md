@@ -4,7 +4,9 @@
 > [business/VALIDATION.md](business/VALIDATION.md), fechado 2026-11-04. Los resultados
 > siguientes no aprueban el runtime actual.
 >
-> Continuación laptop: [compras/Istio y pruebas pendientes](business/VALIDATION.md).
+> Laptop, 2026-11-04: **compras de extremo a extremo PASS**, con auth, PDF,
+> idempotencia y recuperación. [Evidencia y límites](business/VALIDATION.md) ·
+> [Practicar desde .http](business/PRACTICE.md). IAM efectivo y persistencia pendientes.
 > [Karpenter con workers Docker reales](karpenter/README.md) preparado en clúster
 > adicional; validación estática aprobada, instalación/escalado pendientes en WSL.
 

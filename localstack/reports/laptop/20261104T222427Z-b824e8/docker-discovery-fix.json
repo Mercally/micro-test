@@ -1,0 +1,14 @@
+{
+  "scope": "Offline fix for stale Docker node inventory; laptop rerun pending",
+  "userFailure": "docker failed: error: no such object: dd219f68d2eb",
+  "userReport": "localstack/reports/laptop/20261104T222141Z-a06b2e/wsl.json",
+  "cause": "Bootstrap reused Docker IDs captured before build/import and probes; reason for individual container disappearance unknown",
+  "tests": {
+    "dockerDiscovery": 6,
+    "wslRegression": 10,
+    "existingSafety": 8,
+    "result": "PASS"
+  },
+  "runtime": "PENDING",
+  "remoteMutations": false
+}

@@ -1,0 +1,71 @@
+{
+  "endpoint": "http://100.100.154.68:4566",
+  "localstack": {
+    "version": "2026.10.4:a39e30ef",
+    "edition": "pro",
+    "is_license_activated": true,
+    "system": "Docker Desktop,6.6.114.1-microsoft-standard-WSL2,x86_64"
+  },
+  "command": "test",
+  "checks": {
+    "auth_missing": {
+      "status": "PASS",
+      "http": 401
+    },
+    "auth_invalid": {
+      "status": "PASS",
+      "http": 401
+    },
+    "auth_expired": {
+      "status": "PASS",
+      "http": 401
+    },
+    "authenticated_periodic_end_to_end": {
+      "status": "PASS",
+      "sale": {
+        "saleId": "4168ce66-9731-43d0-9029-ca4375ec0ffa",
+        "correlationId": "4168ce66-9731-43d0-9029-ca4375ec0ffa",
+        "status": "COMPLETED",
+        "eventId": "2cdebe93-b601-45da-9a50-07586213932c",
+        "generation": 1,
+        "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:13fa47d1-11cc-40f4-93e9-af827c61d9c1",
+        "recoverable": false,
+        "updatedAt": "2026-11-05T01:50:31.420+00:00",
+        "outbox": [
+          {
+            "event_id": "2cdebe93-b601-45da-9a50-07586213932c",
+            "generation": 1,
+            "published_at": "2026-11-05T01:50:19.782+00:00",
+            "sqs_message_id": "79506efd-42f8-43e7-a273-07aa626d2bdf",
+            "attempts": 1
+          }
+        ],
+        "document": {
+          "document_id": "6e97c40f-b01d-4edb-ad23-9a1714676722",
+          "object_key": "sales/4168ce66-9731-43d0-9029-ca4375ec0ffa/6e97c40f-b01d-4edb-ad23-9a1714676722.pdf",
+          "released_at": "2026-11-05T01:50:31.333+00:00"
+        }
+      },
+      "pdf": {
+        "key": "sales/4168ce66-9731-43d0-9029-ca4375ec0ffa/6e97c40f-b01d-4edb-ad23-9a1714676722.pdf",
+        "sha256": "c5e1f0edb51882c24c01b5d83c3072a3a026336b80da1eacf9de689eb413d8fb",
+        "versionId": "AaGnMfs9vhr52fflJKlbzRhU0O1fS3Y0"
+      },
+      "executions": [
+        {
+          "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:13fa47d1-11cc-40f4-93e9-af827c61d9c1",
+          "status": "SUCCEEDED",
+          "error": null,
+          "cause": null
+        }
+      ]
+    },
+    "reference_idempotency": {
+      "status": "PASS",
+      "saleId": "4168ce66-9731-43d0-9029-ca4375ec0ffa",
+      "eventId": "2cdebe93-b601-45da-9a50-07586213932c"
+    }
+  },
+  "status": "FAIL",
+  "error": "Object of type datetime is not JSON serializable"
+}

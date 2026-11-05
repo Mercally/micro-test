@@ -1,0 +1,44 @@
+{
+  "scope": "Gateway certificate distinction and WSL runtime binding; not Kubernetes runtime acceptance",
+  "rootCause": "EKS returns gateway certificate; previous patch incorrectly required equality with internal k3d CA",
+  "gatewayReadOnlyEvidence": {
+    "endpoint": "http://100.100.154.68:4566",
+    "eksName": "micro-test-local-eks",
+    "kubernetesEndpoint": "https://localhost.localstack.cloud:4511",
+    "certificateSubject": "CN=localhost.localstack.cloud",
+    "certificateIssuer": "C=US, O=Google Trust Services, CN=WR1",
+    "workerInstanceIDs": [
+      "i-ff10bf3fdd4c972a8",
+      "i-bf062470f87f606d8",
+      "i-faec35d8d5f9c9493"
+    ],
+    "allWorkerEC2TagsMatchOwnedEKS": true
+  },
+  "fix": [
+    "Preserve internal k3d CA and TLS verification",
+    "Check selected Docker network, cluster/role labels and published API port",
+    "Correlate last worker provider-id flag with EC2 instances tagged as owned by EKS",
+    "Read-only --inspect still available without Istio"
+  ],
+  "checks": {
+    "wslRegression": {
+      "result": "PASS",
+      "tests": 10
+    },
+    "existingSafety": {
+      "result": "PASS",
+      "tests": 8
+    },
+    "existingContracts": {
+      "result": "PASS",
+      "tests": 3
+    },
+    "diffWhitespace": "PASS"
+  },
+  "pending": [
+    "Real Kubernetes TLS connection in WSL",
+    "Node Ready, labels and taints",
+    "Istio and full purchase flow"
+  ],
+  "remoteMutations": false
+}

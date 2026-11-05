@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Local publisher schedule with explicit pause/resume, separate from legacy Events rules.
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: {Service: scheduler.amazonaws.com}
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals: {aws:SourceAccount: {Ref: AWS::AccountId}}
+            ArnEquals:
+              aws:SourceArn: {Fn::Sub: 'arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule-group/default'}
+      Policies:
+      - PolicyName: invoke-only-local-publisher
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource: {Fn::Sub: 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:micro-test-local-publisher'}
+  Schedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: micro-test-local-publisher
+      GroupName: default
+      ScheduleExpression: rate(1 minute)
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow: {Mode: 'OFF'}
+      State: DISABLED
+      Target:
+        Arn: {Fn::Sub: 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:micro-test-local-publisher'}
+        RoleArn: {Fn::GetAtt: [Role, Arn]}
+        Input: '{"limit":20}'
+        RetryPolicy: {MaximumEventAgeInSeconds: 60, MaximumRetryAttempts: 0}
+Outputs:
+  RoleArn: {Value: {Fn::GetAtt: [Role, Arn]}}
+  ScheduleName: {Value: {Ref: Schedule}}
