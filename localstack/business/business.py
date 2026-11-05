@@ -58,7 +58,7 @@ def template(name):
 
 def validate():
     STATE.mkdir(parents=True, exist_ok=True)
-    for name in ("artifacts", "business", "runtime-probe", "publisher-scheduler"):
+    for name in ("artifacts", "business", "publisher-scheduler"):
         path = STATE / (name + ".json")
         save(path, template(name))
         subprocess.run([str(Path(sys.executable).parent / "cfn-lint"), str(path)], check=True)
@@ -136,22 +136,25 @@ def publisher_schedule(lab, enabled=None):
     stack = lab.stack(PREFIX + suffix)
     if enabled is not None:
         lab.outputs("business")  # Requires the tagged business stack.
-        detail = lab.client("cloudformation").describe_stack_resource(
-            StackName=PREFIX + "business", LogicalResourceId="Schedule")["StackResourceDetail"]
-        if detail["PhysicalResourceId"] != name or detail["ResourceType"] != "AWS::Events::Rule":
-            raise ValueError("Legacy publisher rule is not owned by the business stack")
-        events = lab.client("events")
-        rule = events.describe_rule(Name=name)
-        targets = events.list_targets_by_rule(Rule=name)["Targets"]
-        expected = {"Id": "publisher", "Arn": "arn:aws:lambda:us-east-1:000000000000:function:" + name,
-                    "Input": '{"limit":20}'}
-        if rule.get("ScheduleExpression") != "rate(1 minute)" or rule.get("EventPattern") or targets not in ([], [expected]):
-            raise ValueError("Legacy publisher configuration changed; preserve user changes")
-        if targets:
-            response = events.remove_targets(Rule=name, Ids=["publisher"])
-            if response["FailedEntryCount"]:
-                raise RuntimeError("Could not detach legacy publisher target")
-        events.disable_rule(Name=name)
+        live_business = lab.client("cloudformation").get_template(StackName=PREFIX + "business")["TemplateBody"]
+        if isinstance(live_business, str): live_business = yaml.safe_load(live_business)
+        if "Schedule" in live_business["Resources"]:
+            detail = lab.client("cloudformation").describe_stack_resource(
+                StackName=PREFIX + "business", LogicalResourceId="Schedule")["StackResourceDetail"]
+            if detail["PhysicalResourceId"] != name or detail["ResourceType"] != "AWS::Events::Rule":
+                raise ValueError("Legacy publisher rule is not owned by the business stack")
+            events = lab.client("events")
+            rule = events.describe_rule(Name=name)
+            targets = events.list_targets_by_rule(Rule=name)["Targets"]
+            expected = {"Id": "publisher", "Arn": "arn:aws:lambda:us-east-1:000000000000:function:" + name,
+                        "Input": '{"limit":20}'}
+            if rule.get("ScheduleExpression") != "rate(1 minute)" or rule.get("EventPattern") or targets not in ([], [expected]):
+                raise ValueError("Legacy publisher configuration changed; preserve user changes")
+            if targets:
+                response = events.remove_targets(Rule=name, Ids=["publisher"])
+                if response["FailedEntryCount"]:
+                    raise RuntimeError("Could not detach legacy publisher target")
+            events.disable_rule(Name=name)
         if enabled and not stack:
             deploy_stack(lab, suffix, template("publisher-scheduler"), {})
             stack = lab.stack(PREFIX + suffix)
@@ -221,61 +224,55 @@ def deploy(lab, args):
     if lab.stack(PREFIX + "micro-api"):
         raise ValueError("Legacy micro-api exposes internal routes without auth; retire that optional API before deploying business")
     if lab.stack(PREFIX + "business"):
-        publisher_schedule(lab, False)
+        live = lab.client("cloudformation").get_template(StackName=PREFIX + "business")["TemplateBody"]
+        if isinstance(live, str): live = yaml.safe_load(live)
+        if "Transport" in live["Resources"]:
+            raise ValueError("Existing legacy stack preserved. New bootstrap targets a clean emulator; no automatic migration.")
+        current = pipe(lab)
+        if current and current["CurrentState"] != "STOPPED":
+            raise ValueError("Pause and drain purchases before updating the business stack")
+        active = lab.client("stepfunctions").list_executions(
+            stateMachineArn=outputs(lab)["StateMachineArn"], statusFilter="RUNNING", maxResults=1)["executions"]
+        if active:
+            raise ValueError("Active workflows must finish before updating the business stack")
     if not args.runtime:
         raise ValueError("--runtime localstack/.state/business-runtime.json from WSL bootstrap required")
     runtime = json.loads(Path(args.runtime).read_text())
     endpoint(runtime["endpoint"])
     sys.path.insert(0, str(HERE / "lambda"))
     from runtime import local_url
-    local_url(runtime["MicroBaseUrl"], 31080)
     local_url(runtime["RuntimeEndpoint"], 4566)
     import ipaddress
     address = ipaddress.ip_address(runtime["DatabaseHost"])
     if not any(address in ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")):
         raise ValueError("Database must use observed Docker node/LocalStack private IP")
     if not 1 <= int(runtime["DatabasePort"]) <= 65535: raise ValueError("Invalid PostgreSQL port")
+    from http_workflow import route, health
+    config = route(lab)
+    health(lab)
     validate()
     archive = package()
     deploy_stack(lab, "business-artifacts", template("artifacts"), {}, args.update)
     key = "lambda/" + hashlib.sha256(archive.read_bytes()).hexdigest() + ".zip"
     lab.client("s3").put_object(Bucket=lab.outputs("business-artifacts")["BucketName"], Key=key, Body=archive.read_bytes())
-    parameters = {k: runtime[k] for k in ("MicroBaseUrl", "RuntimeEndpoint", "DatabaseHost", "DatabasePort")}
+    parameters = {k: runtime[k] for k in ("RuntimeEndpoint", "DatabaseHost", "DatabasePort")}
+    parameters.update(NlbBaseUrl=config['endpoint'], ConnectionArn=config['connectionArn'],
+                      ConnectionSecretArn=config['secretArn'])
     body = template("business")
-    # Preserve the explicitly selected HTTP/NLB mode on subsequent WSL deployments.
-    from http_workflow import live_http, configure, route
-    if lab.stack(PREFIX + "business") and live_http(lab):
-        body = configure(body, route(lab))
     # API deployments are snapshots. A new code/runtime target must redeploy its stage.
-    deployment = "Deployment" + hashlib.sha256((key + runtime["MicroBaseUrl"] + json.dumps(body, sort_keys=True)).encode()).hexdigest()[:12]
+    deployment = "Deployment" + hashlib.sha256((key + config["endpoint"] + json.dumps(body, sort_keys=True)).encode()).hexdigest()[:12]
     body["Resources"][deployment] = body["Resources"].pop("Deployment")
     body["Resources"]["Stage"]["Properties"]["DeploymentId"] = {"Ref": deployment}
     deploy_stack(lab, "business", body, parameters | {"CodeKey": key}, args.update)
     pipe(lab, "STOPPED")
     publisher_schedule(lab, False)
-    for function in ("publisher", "transport", "authorizer"):
+    for function in ("publisher", "authorizer"):
         lab.client("lambda").get_waiter("function_active_v2").wait(FunctionName=PREFIX + function)
         lab.client("lambda").get_waiter("function_updated_v2").wait(FunctionName=PREFIX + function)
     if not invoke(lab, "publisher", {"health": True})["schemaReady"]:
         raise ValueError("Publisher reaches PostgreSQL but application outbox schema is missing; complete WSL micro bootstrap")
-    if live_http(lab):
-        from http_workflow import health
-        health(lab)
-    else:
-        invoke(lab, "transport", {"operation": "health"})
-    print("Runtime reachable. Run 'start', then 'http' and 'test'.")
-
-
-def probe(lab, update=False):
-    archive = package()
-    deploy_stack(lab, "business-artifacts", template("artifacts"), {}, update)
-    key = "lambda/" + hashlib.sha256(archive.read_bytes()).hexdigest() + ".zip"
-    lab.client("s3").put_object(Bucket=lab.outputs("business-artifacts")["BucketName"], Key=key, Body=archive.read_bytes())
-    deploy_stack(lab, "business-probe", template("runtime-probe"),
-                 {"CodeKey": key, "DatabasePort": lab.outputs("database")["Port"]}, update)
-    lab.client("lambda").get_waiter("function_active_v2").wait(FunctionName=PREFIX + "business-probe")
-    lab.client("lambda").get_waiter("function_updated_v2").wait(FunctionName=PREFIX + "business-probe")
-    return invoke(lab, "business-probe", {"health": True})
+    health(lab)
+    print("Runtime reachable. Triggers stopped until acceptance checks are ready.")
 
 
 def token(lab, kind="valid"):
@@ -492,7 +489,7 @@ def test_pause_resume(lab):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "package", "status", "probe", "deploy", "start", "stop", "pause-publisher", "resume-publisher", "publish", "http", "test", "test-pause", "iam", "dlq", "snapshot", "verify-snapshot"])
+    parser.add_argument("command", choices=["validate", "package", "status", "deploy", "start", "stop", "pause-publisher", "resume-publisher", "publish", "http", "test", "test-pause", "iam", "snapshot", "verify-snapshot"])
     parser.add_argument("--endpoint", type=endpoint)
     parser.add_argument("--runtime")
     parser.add_argument("--update", action="store_true")
@@ -511,19 +508,17 @@ def main():
         if args.command == "status":
             result["persistence"] = lab.health.get("features")
             result["stacks"] = {suffix: (lab.stack(PREFIX + suffix) or {}).get("StackStatus", "ABSENT")
-                                for suffix in ("network", "eks", "registry", "database", "storage", "queues", "lambda", "workflow", "pipe", "api", "micro-api", "business-artifacts", "business-probe", "business", "business-scheduler")}
+                                for suffix in ("network", "eks", "registry", "database", "storage", "scaling-network", "business-artifacts", "business", "business-scheduler")}
             if lab.stack(PREFIX + "business"):
                 result["outputs"] = outputs(lab)
                 result["pipe"] = pipe(lab)
                 result["publisherSchedule"] = publisher_schedule(lab)
         elif args.command == "deploy": deploy(lab, args)
-        elif args.command == "probe": result["result"] = probe(lab, args.update)
         elif args.command == "start":
             if not invoke(lab, "publisher", {"health": True})["schemaReady"]:
                 raise ValueError("Application outbox schema missing; complete WSL bootstrap")
-            from http_workflow import live_http, health
-            if live_http(lab): health(lab)
-            else: invoke(lab, "transport", {"operation": "health"})
+            from http_workflow import health
+            health(lab)
             pipe(lab, "RUNNING")
             publisher_schedule(lab, True)
         elif args.command == "stop":
@@ -544,9 +539,6 @@ def main():
         elif args.command == "iam":
             import checks
             checks.iam(lab, report)
-        elif args.command == "dlq":
-            import checks
-            checks.queues(lab, report)
         else:
             result["result"] = snapshot(lab, args.sale_id, args.snapshot, args.command == "verify-snapshot")
         result["status"] = "PASS"

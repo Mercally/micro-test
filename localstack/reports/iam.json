@@ -1,5 +1,0 @@
-{
-  "status": "FAIL",
-  "error": "Request unexpectedly succeeded; IAM enforcement is absent or policy is ineffective",
-  "endpoint": "http://100.95.224.37:4566"
-}

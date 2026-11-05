@@ -100,8 +100,8 @@ micro y Lambdas y propagar contexto por outbox/SQS. Documentación de dashboard:
   causas de excepción sin filtrar. No consulta AWS real.
 - `DEGRADED` indica fallo de lectura/exportación: reintenta automáticamente.
   Revisa `observer.log`, `dashboard.log` y conectividad a laptop.
-- Persistencia de visor **no demuestra persistencia de LocalStack**. Emulador
-  conserva su advertencia de persistencia deshabilitada; no se reinició.
+- Persistencia de visor **no demuestra persistencia de LocalStack**. Lab anterior
+  no tiene persistencia habilitada; nuevo arranque requiere prueba de recuperación.
 
 ## Verificación
 
@@ -114,10 +114,6 @@ Pruebas cubren jerarquía, estados activos, reintentos, errores permanentes,
 redacción, rechazo de recursos ajenos y reintento de exportación fallida.
 Evidencia de ejecución real se guarda en `localstack/reports/laptop/`.
 
-Validación ejecutada: nueve tests aprobados; compra
-`0350ece3-2b84-48e8-92ed-774ae32523a7` observada en Normalize y Document mientras
-procesaba, final COMPLETED con PDF verificado. Aspire recibió 23 spans, dos
-intentos fallidos y 31 logs correlacionados. Waterfall y filtro saleId comprobados
-en navegador. Reinicio de visor conservó 13 trazas previas; compra nueva elevó
-total a 14.
-Reporte: [observability.json](../reports/laptop/20261105T033814Z-0cdb42/observability.json).
+Estado actual y evidencia histórica: [VALIDATION.md](../VALIDATION.md).
+Tests offline incluyen proyección HTTP/NLB y compatibilidad de trazas anteriores
+con Lambda. No representan instrumentación nativa de aceptación/SQL.

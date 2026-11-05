@@ -2,8 +2,8 @@
 
 Usa scripts actualizados con EventBridge Scheduler. El laboratorio está en laptop;
 Mac accede por `http://100.100.154.68:4566`, WSL por `http://127.0.0.1:4566`.
-La regla Events antigua permanece sin targets por un fallo de pausa del emulador.
-No usar `events enable-rule` para este flujo.
+Arranque central: [../README.md](../README.md). Emulador nuevo crea solo Scheduler;
+compatibilidad con regla antigua se conserva únicamente al operar lab anterior.
 
 ## Generar requests
 
@@ -11,9 +11,9 @@ Desde raíz del repositorio en WSL:
 
 ```bash
 export LAB_ENDPOINT=http://127.0.0.1:4566
-localstack/.venv/bin/python localstack/business/business.py status --endpoint "$LAB_ENDPOINT"
-localstack/.venv/bin/python localstack/business/business.py start --endpoint "$LAB_ENDPOINT"
-localstack/.venv/bin/python localstack/business/business.py http --endpoint "$LAB_ENDPOINT"
+./localstack/lab status --endpoint "$LAB_ENDPOINT"
+./localstack/lab resume --endpoint "$LAB_ENDPOINT"
+./localstack/lab http --endpoint "$LAB_ENDPOINT"
 ```
 
 En Mac usa `export LAB_ENDPOINT=http://100.100.154.68:4566` y mismos comandos.
@@ -31,8 +31,8 @@ marcadores y no se envía directamente.
 4. Repite POST original sin cambiar referencia/contenido: conserva saleId/eventId.
 5. Envía bloque **Same reference, different payload**: debe responder 409.
 
-Flujo observado: API Gateway/authorizer → micro → transacción PostgreSQL
-venta+outbox → Lambda publisher periódico → SQS → Pipe → Step Functions →
+Flujo observado: API Gateway/authorizer → NLB → Istio → micro → transacción PostgreSQL
+venta+outbox → Lambda publisher periódico → SQS → Pipe → Step Functions HTTP → NLB → Istio →
 pasos del micro → PDF S3. Consultar estado no ejecuta pasos ni regenera el PDF.
 
 ## Ejercicios de error
@@ -40,7 +40,7 @@ pasos del micro → PDF S3. Consultar estado no ejecuta pasos ni regenera el PDF
 | Bloque del .http | Resultado esperado | Evidencia |
 |---|---|---|
 | Missing / Bad signature / Expired token | 401/403 | Respuesta de API Gateway |
-| Transient | Recuperación y COMPLETED | Dos errores TransientStepError en historial SFN y reintentos |
+| Transient | Recuperación y COMPLETED | Dos errores HTTP 503 en historial SFN y reintentos |
 | Permanent | FAILED recuperable | Error de upload consultable y ejecución SFN FAILED |
 | Retry después de FAILED | Nueva generación, COMPLETED | Nuevo eventId; conserva venta y pasos terminados |
 
@@ -75,7 +75,7 @@ Dos ejecuciones pueden compartir evento; efectos de negocio conservan un documen
 lógico. Entrega es al menos una vez. La suite automatizada comprueba este caso:
 
 ```bash
-localstack/.venv/bin/python localstack/business/business.py test --endpoint "$LAB_ENDPOINT"
+./localstack/lab test --endpoint "$LAB_ENDPOINT"
 ```
 
 ## Observar y detener
@@ -92,13 +92,13 @@ aws --profile localstack-laptop --endpoint-url "$LAB_ENDPOINT" --region us-east-
 aws --profile localstack-laptop --endpoint-url "$LAB_ENDPOINT" --region us-east-1 \
   stepfunctions list-executions \
   --state-machine-arn arn:aws:states:us-east-1:000000000000:stateMachine:micro-test-local-purchases
-localstack/.venv/bin/python localstack/business/business.py stop --endpoint "$LAB_ENDPOINT"
+./localstack/lab pause --endpoint "$LAB_ENDPOINT"
 ```
 
-`stop` deshabilita Scheduler y detiene Pipe; ejecuciones iniciadas pueden terminar.
-No borra ventas, outbox, colas ni PDFs. `start` reanuda. No reiniciar LocalStack:
-persistencia continúa deshabilitada. IAM efectivo, persistencia tras reinicio y
-Karpenter siguen sujetos a evidencias separadas de `VALIDATION.md`.
+`pause` deshabilita Scheduler y detiene Pipe; ejecuciones iniciadas pueden terminar.
+No borra ventas, outbox, colas ni PDFs. `resume` reanuda. Lab anterior tiene persistencia deshabilitada;
+nuevo arranque configura volumen, pero recuperación debe probarse por separado.
+Estado de pruebas: [VALIDATION.md](../VALIDATION.md).
 
 Prueba de pausa real durante 75 segundos y recuperación automática después de reanudar:
 

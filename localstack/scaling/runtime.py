@@ -125,7 +125,7 @@ def sync_targets(lab, kube, network, mode):
     if {(t['Id'], t['Port']) for t in old} != {(t['Id'], t['Port']) for t in targets}:
         from http_workflow import live_http
         from business import pipe
-        if live_http(lab):
+        if lab.stack('micro-test-local-business') and live_http(lab):
             running = lab.client('stepfunctions').list_executions(
                 stateMachineArn=lab.outputs('business')['StateMachineArn'], statusFilter='RUNNING', maxResults=1)['executions']
             if pipe(lab)['CurrentState'] != 'STOPPED' or running:

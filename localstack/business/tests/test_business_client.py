@@ -19,7 +19,7 @@ class BusinessClientTests(unittest.TestCase):
         lab.outputs.return_value = {"RoleArn": "local-scheduler-role"}
         cf.describe_stack_resource.return_value = {"StackResourceDetail": {
             "PhysicalResourceId": "micro-test-local-publisher", "ResourceType": "AWS::Events::Rule"}}
-        cf.get_template.return_value = {"TemplateBody": business.template("publisher-scheduler")}
+        cf.get_template.side_effect = lambda **kw: {"TemplateBody": ({"Resources": {"Schedule": {}}} if kw["StackName"] == "micro-test-local-business" else business.template("publisher-scheduler"))}
         events.describe_rule.return_value = {"ScheduleExpression": "rate(1 minute)"}
         target = {"Id": "publisher", "Arn": "arn:aws:lambda:us-east-1:000000000000:function:micro-test-local-publisher",
                   "Input": '{"limit":20}'}
@@ -58,6 +58,25 @@ class BusinessClientTests(unittest.TestCase):
         self.assertEqual(business.publisher_schedule(lab)["State"], "ENABLED")
         events.remove_targets.assert_not_called()
         scheduler.update_schedule.assert_not_called()
+
+    def test_new_scheduler_does_not_require_a_legacy_events_rule(self):
+        lab, events, scheduler, config = self.scheduler_fixture()
+        lab.client('cloudformation').get_template.side_effect = lambda **kw: {
+            "TemplateBody": ({"Resources": {}} if kw["StackName"] == "micro-test-local-business"
+                             else business.template("publisher-scheduler"))}
+        scheduler.get_schedule.side_effect = [config, config | {"State": "DISABLED"}]
+        business.publisher_schedule(lab, False)
+        events.describe_rule.assert_not_called()
+        events.remove_targets.assert_not_called()
+        scheduler.update_schedule.assert_called_once()
+
+    def test_legacy_stack_deployment_rejected_before_any_write(self):
+        lab = Mock(); lab.stack.side_effect = [None, {"StackStatus": "CREATE_COMPLETE"}]
+        lab.client.return_value.get_template.return_value = {"TemplateBody": {"Resources": {"Transport": {}}}}
+        with self.assertRaisesRegex(ValueError, "legacy stack preserved"):
+            business.deploy(lab, Mock())
+        lab.client.return_value.update_stack.assert_not_called()
+        lab.client.return_value.put_object.assert_not_called()
 
     def test_token_uses_emulator_clock_even_if_client_clock_is_ahead(self):
         lab = Mock()

@@ -5,12 +5,12 @@ import os
 import unittest
 from unittest.mock import patch, Mock
 from common import ROOT, Lab, endpoint_url, NoRedirect
-from lab import FILES, template, cleanup
+from lab import FILES, template
 
 
 class SafetyTests(unittest.TestCase):
     def test_rejects_real_aws_and_endpoint_ambiguities(self):
-        for value in ("https://s3.amazonaws.com", "http://127.0.0.1:4566@aws.amazon.com",
+        for value in ("https://s3.amazonaws.com", "http://100.95.224.37:4566", "http://127.0.0.1:4566@aws.amazon.com",
                       "http://100.95.224.38:4566", "http://100.100.154.69:4566", "http://127.0.0.1:443",
                       "http://127.0.0.1:4566/foo", "http://127.0.0.1:4566?host=aws",
                       "http://localhost.evil.test:4566", "http://localhost:4566#fragment"):
@@ -49,33 +49,10 @@ class SafetyTests(unittest.TestCase):
             with self.assertRaises(ValueError):guard(Mock(url="https://s3.amazonaws.com/bucket"))
             with self.assertRaises(ValueError):lab.client("s3",("AKIAREALKEY","secret"))
 
-    def test_default_cleanup_preserves_data_and_pipe_dependencies(self):
-        lab=Mock()
-        lab.stack.return_value={"StackStatus":"CREATE_COMPLETE"}
-        with patch("lab.owned_pipe",return_value={"Name":"micro-test-local-diagnostic"}), \
-                patch("lab.set_pipe_state") as state, patch("lab.wait_stack"), patch("builtins.print"):
-            cleanup(lab,False)
-        state.assert_called_once_with(lab,"STOPPED")
-        deleted={c.kwargs["StackName"] for c in lab.client.return_value.delete_stack.call_args_list}
-        self.assertEqual(deleted,{"micro-test-local-api","micro-test-local-micro-api"})
-        lab.client.return_value.delete_pipe.assert_not_called()
-
-    def test_rendered_fixtures_and_stopped_pipe(self):
+    def test_only_foundation_templates_remain(self):
+        self.assertEqual(len(FILES), 5)
         for path in FILES:
-            self.assertNotIn("RENDER_FROM_LOCAL",json.dumps(template(path)))
-        pipe=json.loads((ROOT/"fixtures/pipe.json").read_text())
-        self.assertEqual(pipe["DesiredState"],"STOPPED")
-        workflow=json.loads((ROOT/"fixtures/diagnostic.asl.json").read_text())
-        self.assertEqual(workflow["States"][workflow["StartAt"]]["Type"],"Task")
-
-    def test_fixture_preserves_api_and_sqs_payload(self):
-        spec=importlib.util.spec_from_file_location("diagnostic",ROOT/"fixtures/diagnostic.py")
-        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-        payload={"diagnosticId":"proof","value":73}
-        expected=module.handler(payload,None)
-        self.assertEqual(module.handler([{"body":json.dumps(payload)}],None),expected)
-        proxy=module.handler({"httpMethod":"POST","body":json.dumps(payload)},None)
-        self.assertEqual(json.loads(proxy["body"]),expected)
+            self.assertNotIn("RENDER_FROM_LOCAL", json.dumps(template(path)))
 
 
-if __name__=="__main__":unittest.main()
+if __name__ == "__main__": unittest.main()

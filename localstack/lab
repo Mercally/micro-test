@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Single entry point. Prerequisite installation is local to this checkout.
+set -euo pipefail
+LAB_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${1:-help}" == help || "${1:-}" == --help || "${1:-}" == -h ]]; then
+  printf '%s\n' 'Usage: ./localstack/lab {up|status|http|test|pause|resume|verify} [options]' \
+    'up: WSL2 x86_64, Docker Desktop, Python 3.11+ with venv, curl, LocalStack token.' \
+    'Starts a new owned persistent emulator; refuses the existing laptop emulator.' \
+    'status/http/test/pause/resume: --endpoint http://127.0.0.1:4566 (or authorized laptop endpoint).' \
+    'verify: offline Python tests, CloudFormation lint and repository checks.'
+  exit 0
+fi
+if ! python3 -c 'import sys; assert sys.version_info >= (3,11)' 2>/dev/null; then
+  printf '%s\n' 'Python 3.11+ required.' >&2; exit 1
+fi
+if [[ ! -x "$LAB_ROOT/.venv/bin/python" ]]; then
+  python3 -m venv "$LAB_ROOT/.venv" || {
+    printf '%s\n' 'Install the venv package matching python3 (e.g. sudo apt install python3-venv), then retry.' >&2
+    exit 1
+  }
+fi
+LAB_PYTHON="$LAB_ROOT/.venv/bin/python"
+"$LAB_PYTHON" -m pip --version >/dev/null 2>&1 || {
+  printf '%s\n' 'Incomplete .venv: install matching python3-venv, then run python3 -m venv localstack/.venv.' >&2; exit 1;
+}
+# Reinstall only when locked requirements change or environment has no receipt.
+LAB_LOCK="$LAB_ROOT/.venv/requirements.sha256"
+LAB_HASH="$("$LAB_PYTHON" -c 'import hashlib,pathlib,sys; r=pathlib.Path(sys.argv[1]); print(hashlib.sha256(b"".join((r/p).read_bytes() for p in ("requirements.txt","business/requirements.txt","observability/requirements.txt"))).hexdigest())' "$LAB_ROOT")"
+if [[ ! -f "$LAB_LOCK" || "$(cat "$LAB_LOCK")" != "$LAB_HASH" ]]; then
+  "$LAB_PYTHON" -m pip install -r "$LAB_ROOT/requirements.txt"
+  printf '%s\n' "$LAB_HASH" > "$LAB_LOCK"
+fi
+exec "$LAB_PYTHON" "$LAB_ROOT/run.py" "$@"

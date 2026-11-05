@@ -222,7 +222,6 @@ def bootstrap(lab, kube, args):
     print("Resolving current Ready node for Lambda/NodePort transport", flush=True)
     proof["nodePortTarget"] = nodeport_target(kube, args.docker_network)
     node_ip = proof["nodePortTarget"]["ip"]
-    save(ROOT / ".state/micro-api-parameters.json", {"MicroBaseUrl":f"http://{node_ip}:31080"})
     publisher_host, publisher_port = host, port
     if args.database == "postgres":
         # Explicit fallback only: Lambda cannot resolve the Kubernetes service DNS.

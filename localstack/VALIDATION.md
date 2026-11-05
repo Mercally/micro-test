@@ -1,77 +1,60 @@
-# Evidencia y pendientes — 2026-11-03
+# Validación: separar evidencia histórica de arranque nuevo
 
-> Reporte histórico del host anterior. Para laptop y extensión de compras, consultar
-> [business/VALIDATION.md](business/VALIDATION.md), fechado 2026-11-04. Los resultados
-> siguientes no aprueban el runtime actual.
->
-> Laptop, 2026-11-04: **compras de extremo a extremo PASS**, con auth, PDF,
-> idempotencia y recuperación. [Evidencia y límites](business/VALIDATION.md) ·
-> [Practicar desde .http](business/PRACTICE.md). IAM efectivo y persistencia pendientes.
-> [Karpenter con workers Docker reales](karpenter/README.md) preparado en clúster
-> adicional; validación estática aprobada, instalación/escalado pendientes en WSL.
+## Flujo existente en laptop — probado el 2026-11-05
 
-Ejecutado desde Mac contra gateway Tailscale autorizado
-`http://100.95.224.37:4566`, cuenta emulada `000000000000`, región `us-east-1`.
-Imagen reportada: `2026.10.4:a39e30ef`, edición Pro, licencia activa.
-No se verificó el nombre comercial del plan mediante API ni el digest de imagen
-Docker de PC. Solo `localstack/` aparece como cambio nuevo en Git.
+[Evidencia curada](evidence/nlb-purchase-20261105.json): compra autenticada hasta PDF,
+idempotencia, JWT ausente/inválido/expirado, dos HTTP 503 con recuperación, error
+permanente/retry y duplicado tras caída del publisher. Compra normal: 7 tareas HTTP,
+cero eventos Lambda dentro del workflow. Tres rutas API apuntan al mismo NLB.
+Usuario confirmó implementación de paquete NLB en WSL.
 
-| Comprobación | Resultado y alcance |
+Listener observado entonces: TCP 4512. Los 404 previos provenían de usar 4566,
+gateway de APIs, como puerto NLB. Arranque nuevo descubre listener; no fija 4512.
+Aspire observó compras históricas; visor usa historial SFN reconstruido, no spans
+nativos de aceptación, SQL ni S3.
+
+## Arranque consolidado desde cero
+
+**Preparado; aceptación completa PENDIENTE en WSL aislado.** No se reinició ni
+redeplegó laboratorio existente para validar esta reorganización.
+
+| Comprobación | Estado |
 |---|---|
-| 11 plantillas renderizadas, referencias, imports y orden | PASS; cfn-lint 1.59.0 sin errores. W3010/W3691/W2501 documentados como elecciones locales |
-| 27 objetos Kubernetes/Istio | YAML parseado; no validación contra API Kubernetes ni instalación ejecutada |
-| Python y guardias | 7 tests offline PASS; compilación sintáctica PASS; endpoints externos/redirects rechazados; credenciales heredadas removidas; cleanup conserva datos/dependencias |
-| Despliegue local | 10 stacks completados; segunda ejecución los reconoce unchanged. API opcional del micro no desplegada |
-| VPC/routing/SG | 8 subredes y 8 asociaciones leídas por EC2 API. No demuestra tráfico ni firewall |
-| EKS | API ACTIVE, versión solicitada 1.34; 3 Managed Node Groups ACTIVE, labels y taints presentes. Workers/pods no verificados |
-| RDS/secreto | API available, grupos y secreto leídos. SQL, versión real del motor y TLS no verificados |
-| ECR | Repositorio/URI leídos. Push/pull y autenticación de nodos pendientes |
-| S3 | Bucket existente, versionado Enabled. PDF del micro pendiente |
-| Lambda/API Gateway | Invocación directa y POST HTTP real devuelven payload esperado |
-| Logs | Eventos diagnósticos leídos; grupo convencional tiene stream real. LoggingConfig personalizado no se aplica correctamente en esta instalación |
-| SQS/Pipe/Step Functions/Lambda | PASS con diagnosticId único, value=73 y salida íntegra. Ejecución del Pipe distinta de la invocación directa del target |
-| Pipe al finalizar | CurrentState=STOPPED y DesiredState=STOPPED, consultados tras smoke |
-| DLQ/redrive | PASS: mensaje vuelve a ser recibido y termina en DLQ con el mismo payload |
-| IAM | FAIL esperado como hallazgo: usuario temporal sin políticas puede leer bucket. No se declara aprobado el aislamiento IAM |
-| Conectividad desde Mac | Gateway 4566 responde. TCP 4510 (DB) y 4511 (Kubernetes) timeout; no se reescribieron kubeconfig ni URLs de servicio para simular acceso |
-| Istio/mTLS/NetworkPolicy/SQL/HTTP/PDF | PENDIENTE: requieren bootstrap WSL, Docker y Kubernetes locales |
-| Persistencia/reinicio | NO EJECUTADO: health indica persistence=disabled; reiniciar podría perder datos del emulador compartido |
-| Limpieza completa | NO EJECUTADA para conservar laboratorio. Dos Pipes diagnósticos propios se eliminaron durante investigación; workaround documentado |
-| AWS real / archivos existentes | Ninguna llamada de administración a AWS real; archivos existentes conservados |
+| Contratos, descubrimiento/ownership, límites HPA y proyección de trazas | Pruebas offline; ejecutar `./localstack/lab verify` |
+| Rechazo de emulador ajeno, etapas obligatorias, fallo Karpenter, no exposición de token | Cubierto por tests de bootstrap |
+| Plantillas locales y ASL HTTP directo | Validación estática; no equivale a CFN CREATE_COMPLETE |
+| Primera instalación íntegra en WSL limpio | PENDIENTE |
+| HPA con muestras reales de CPU/RAM en instalación nueva | PENDIENTE; obligatorio en `up` |
+| Karpenter → NodeClaim → worker real → HTTP | PENDIENTE; obligatorio en `up` |
+| Escalado/reducción HPA y consolidación de nodos | PENDIENTE, ejercicios separados |
+| Persistencia nueva | Configurada con volumen y PERSISTENCE=1; recuperación tras reinicio PENDIENTE |
+| Enforcement IAM / conectividad privada AWS / TLS de entrada | NO CERTIFICADOS por lab |
+| CloudFormation AWS real | PENDIENTE de diseño final/generación; no desplegado |
 
-Los JSON son evidencia puntual, no certificados de que recursos sigan disponibles
-después de cambiar o reiniciar PC. Los fixtures no prueban ventas asíncronas ni
-funciones de negocio ausentes.
+`up` solo termina con PASS si todas sus etapas obligatorias pasan. Un controller
+Ready, APIs EC2/EKS en estado available/active, aplicar ZIP o renderizar Helm no
+cuentan como worker real funcional. Reporte registra etapa fallida y mantiene
+triggers detenidos si el arranque queda incompleto.
 
-## Evidencia conservada
+Verificación ejecutada en Mac tras reorganización: **75 pruebas PASS, 3 omitidas**,
+Compose válido y cfn-lint sin errores. Repetido en copia limpia sin `.state`
+ni reportes/cachés iniciales. [Resumen](evidence/repository-validation-20261105.json). Warnings de plantillas base: AZ fijas,
+contraseña ficticia local y versión PostgreSQL genérica `16`; no son plantillas AWS.
+Definición HTTP contrastada por lectura contra workflow vigente: equivalente;
+Pipe RUNNING y Scheduler ENABLED. Ningún despliegue/reinicio del lab existente.
 
-- [coverage.json](reports/coverage.json): identificación y respuestas iniciales de APIs/registro.
-- [deployment.json](reports/deployment.json): stacks, recursos y propiedades leídas por servicios.
-- [eks-api.json](reports/eks-api.json): EKS/nodegroups; declara runtime no verificado.
-- [diagnostic.json](reports/diagnostic.json): payload, ejecución SQS/Pipe y salida Lambda; estado final detenido.
-- [redrive.json](reports/redrive.json): comprobación de DLQ con payload correlacionado.
-- [iam.json](reports/iam.json): fallo de denegación sin políticas.
-- [pipe-lifecycle.json](reports/pipe-lifecycle.json): discrepancias de ciclo de vida comprobadas.
-- [lambda-logs.json](reports/lambda-logs.json): eventos diagnósticos archivados antes de normalizar grupo de logs.
-- [remote-connectivity.json](reports/remote-connectivity.json): puertos de DB/Kubernetes no alcanzables desde Mac.
+Tests PostgreSQL requieren instancia/base aisladas; si faltan, se muestran como
+omitidos. No usar DB de compras para habilitarlos: limpian tablas de su base de test.
 
-## Comandos pendientes
+## Evidencia que falta recoger
 
-La secuencia completa y parámetros están en [README.md](README.md). Desde WSL,
-después de seleccionar nombres Docker/k3d observados:
+En motor Docker aislado, ejecutar `./localstack/lab up`; conservar `bootstrap.json`,
+`node-test.json` y `purchase-test.json` generados en `localstack/reports/laptop/`.
+Después ejecutar ejercicios CPU/RAM y consolidación de [scaling/README.md](scaling/README.md).
+Para persistencia hace falta plan de pausa, snapshot de compra/PDF y reinicio
+controlado **solo del emulador nuevo**, con comprobación SQL/S3/EKS posterior.
+No realizar ese reinicio sobre lab anterior sin persistencia.
 
-```bash
-localstack/.venv/bin/python localstack/scripts/kube.py \
-  --endpoint http://127.0.0.1:4566 --k3d-cluster "$LAB_K3D_CLUSTER" bootstrap \
-  --localstack-container "$LAB_LOCALSTACK_CONTAINER" --docker-network "$LAB_DOCKER_NETWORK" \
-  --database rds --presign-endpoint http://100.95.224.37:4566
-localstack/.venv/bin/python localstack/scripts/lab.py --endpoint http://127.0.0.1:4566 \
-  deploy --only micro-api --parameters localstack/.state/micro-api-parameters.json
-localstack/.venv/bin/python localstack/scripts/kube.py \
-  --endpoint http://127.0.0.1:4566 --k3d-cluster "$LAB_K3D_CLUSTER" registry
-```
-
-Después, ejecutar `checks.py micro` con URL API generada. Preparar una sesión con
-enforcement IAM activo y repetir `checks.py iam`. Configurar persistencia durable
-antes de un reinicio intencional y ejecutar `checks.py restore`. No reiniciar el
-emulador actual para fingir una prueba de persistencia aprobada.
+Reportes brutos quedan fuera de Git; solo evidencia curada y sin secretos se
+versiona en `evidence/`. Fuentes anteriores, fixes por ZIP y reportes históricos
+versionados siguen disponibles en Git, no son instrucciones vigentes.

@@ -1,0 +1,58 @@
+{
+  "status": "PASS",
+  "scope": "LocalStack internal NLB TCP, Docker/NodePort to Istio; not Lattice/TLS/IAM enforcement parity",
+  "saleId": "beca95b4-52aa-4640-932f-446930fc205a",
+  "executionArn": "arn:aws:states:us-east-1:000000000000:execution:micro-test-local-purchases:b0c1bce2-0839-43c7-a2b7-93be0254e6a6",
+  "httpTasksExecuted": 7,
+  "lambdaEvents": 0,
+  "tasksDefined": 8,
+  "routes": [
+    {
+      "path": "/purchases",
+      "method": "POST",
+      "auth": "CUSTOM",
+      "uri": "http://micro-test-local-nlb.elb.localhost.localstack.cloud:4512/api/v1/purchases"
+    },
+    {
+      "path": "/purchases/{saleId}",
+      "method": "GET",
+      "auth": "CUSTOM",
+      "uri": "http://micro-test-local-nlb.elb.localhost.localstack.cloud:4512/api/v1/purchases/{saleId}"
+    },
+    {
+      "path": "/purchases/{saleId}/retry",
+      "method": "POST",
+      "auth": "CUSTOM",
+      "uri": "http://micro-test-local-nlb.elb.localhost.localstack.cloud:4512/api/v1/purchases/{saleId}/retry"
+    }
+  ],
+  "checks": {
+    "auth_missing": "PASS",
+    "auth_invalid": "PASS",
+    "auth_expired": "PASS",
+    "authenticated_periodic_end_to_end": "PASS",
+    "reference_idempotency": "PASS",
+    "transient": "PASS",
+    "permanent_and_recovery": "PASS",
+    "publisher_crash_duplicate": "PASS",
+    "invalid_event": "PASS"
+  },
+  "transientFailures": 2,
+  "pdf": {
+    "key": "sales/beca95b4-52aa-4640-932f-446930fc205a/7e14f4a2-25e3-43a9-be79-e96d909b362c.pdf",
+    "sha256": "ef82b10b584b681707005bd63309bcd2d2ac71189a192fcea1b0b3ade5f2d44c",
+    "versionId": "AaGnMftLEa6MBa3WjyPvNXBG9CoUx1Xt"
+  },
+  "sourceReport": "20261105T171949Z-ead708/test.json",
+  "invalidContractChecks": {
+    "status": "PASS",
+    "cases": [
+      "invalid UUID",
+      "path injection in saleId",
+      "fractional generation",
+      "zero generation",
+      "string version",
+      "mismatched correlationId"
+    ]
+  }
+}

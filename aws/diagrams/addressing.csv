@@ -1,9 +1,0 @@
-Rol,AZ,Subred,CIDR,IP utilizables antes de asignaciones,Tabla de rutas,Destinos
-general,us-east-1a,GeneralSubnetA,10.20.11.0/24,251,GeneralRouteTableA,local; gateway S3
-general,us-east-1b,GeneralSubnetB,10.20.12.0/24,251,GeneralRouteTableB,local; gateway S3
-terceros,us-east-1a,TercerosSubnetA,10.20.13.0/24,251,TercerosRouteTableA,local; gateway S3
-terceros,us-east-1b,TercerosSubnetB,10.20.14.0/24,251,TercerosRouteTableB,local; gateway S3
-onprem,us-east-1a,OnpremSubnetA,10.20.15.0/24,251,OnpremRouteTableA,local; gateway S3
-onprem,us-east-1b,OnpremSubnetB,10.20.16.0/24,251,OnpremRouteTableB,local; gateway S3
-db,us-east-1a,DbSubnetA,10.20.21.0/24,251,DbRouteTableA,local
-db,us-east-1b,DbSubnetB,10.20.22.0/24,251,DbRouteTableB,local

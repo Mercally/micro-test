@@ -13,7 +13,7 @@ ACCOUNT = "000000000000"
 TAG = {"Key": "Lab", "Value": "micro-test-local"}
 # Explicit lab hosts only. The laptop address comes from the user-selected
 # localstack-laptop profile; this does not authorize the entire Tailscale range.
-LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "100.95.224.37", "100.100.154.68"})
+LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "100.100.154.68"})
 
 
 def endpoint_url(value):
@@ -21,7 +21,7 @@ def endpoint_url(value):
     if (url.scheme != "http" or url.hostname not in LOCAL_HOSTS
             or url.port != 4566 or url.username or url.password
             or url.path not in ("", "/") or url.query or url.fragment):
-        raise ValueError("Endpoint must be http://{127.0.0.1,localhost,[::1],100.95.224.37,100.100.154.68}:4566")
+        raise ValueError("Endpoint must be http://{127.0.0.1,localhost,[::1],100.100.154.68}:4566")
     return value.rstrip("/")
 
 

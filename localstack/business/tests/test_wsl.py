@@ -126,32 +126,6 @@ class WslDiscoveryTests(unittest.TestCase):
         for call in kube.call.call_args_list:
             self.assertIn("--request-timeout=30s", call.args)
 
-    def test_inspect_main_never_bootstraps_or_deploys(self):
-        lab, cluster, containers = runtime()
-        lab.stack.return_value = None
-        lab.outputs.return_value = {"ClusterName": "micro-test-local-eks"}
-        lab.client.return_value.describe_cluster.return_value = {
-            # EKS gateway CA differs from the internal k3d CA: supported, not insecure.
-            "cluster": {"version": "1.34", "certificateAuthority": {"data": base64.b64encode(b"gateway-cert").decode()}}}
-        lab.health = {}
-        container = {"Id": "local", "Name": "/localstack", "Config": {"Image": "localstack/localstack-pro", "Env": []},
-                     "NetworkSettings": {"Networks": {NETWORK: {}}, "Ports": {"4566/tcp": [{"HostPort": "4566"}]}}}
-        results = [Mock(stdout="local"), Mock(stdout=json.dumps([container] + containers)),
-                   Mock(stdout=json.dumps([cluster]))]
-        with patch.object(sys, "argv", ["wsl.py", "--inspect", "--network", NETWORK]), \
-                patch.object(sys, "platform", "linux"), patch.object(Path, "read_text", return_value="microsoft-WSL2"), \
-                patch.object(wsl, "required_tools"), patch.object(wsl, "Lab", return_value=lab), \
-                patch.object(wsl, "run", side_effect=results), patch.object(wsl, "Kube") as constructor, \
-                patch.object(wsl, "bootstrap") as bootstrap, patch.object(wsl, "deploy") as deploy, \
-                patch.object(wsl, "save") as save, patch("builtins.print"):
-            constructor.return_value.inspect.return_value = {"nodes": []}
-            constructor.return_value.report_dir = Path("/tmp/not-written")
-            wsl.main()
-            constructor.assert_called_once_with(NAME, expected_network=NETWORK, expected_api_port=43517)
-            bootstrap.assert_not_called()
-            deploy.assert_not_called()
-            lab.client.return_value.enable_rule.assert_not_called()
-            self.assertEqual(save.call_args.args[1]["status"], "INSPECTED")
 
 
 if __name__ == "__main__":

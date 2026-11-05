@@ -1,0 +1,28 @@
+# Managed only by ./localstack/lab. Never adopts an existing emulator.
+name: micro-test-local
+services:
+  localstack:
+    image: localstack/localstack-pro:2026.10.4@sha256:2290500d7398e6458544fab2f49aaf170b81a1006ee69067e8e7fc59b810a824
+    platform: linux/amd64
+    container_name: micro-test-local-emulator
+    network_mode: bridge
+    labels:
+      lab: micro-test-local
+      lab.launcher: localstack/lab-v1
+    environment:
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:?Set LOCALSTACK_AUTH_TOKEN in your shell}
+      PERSISTENCE: '1'
+      SNAPSHOT_SAVE_STRATEGY: SCHEDULED
+      SNAPSHOT_LOAD_STRATEGY: ON_STARTUP
+      MANAGED_K8S_PROVIDER: k3s
+    ports:
+      - '127.0.0.1:4566:4566'
+    volumes:
+      - state:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    stop_grace_period: 120s
+volumes:
+  state:
+    labels:
+      lab: micro-test-local
+      lab.launcher: localstack/lab-v1

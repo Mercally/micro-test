@@ -1,0 +1,33 @@
+{
+  "date": "2026-11-05",
+  "scope": "Repository consolidation; offline verification only for fresh bootstrap",
+  "tests": {
+    "passed": 75,
+    "skipped": 3,
+    "skipReason": "PostgreSQL integration tests need an isolated test database"
+  },
+  "cleanSourceCheckout": "PASS: no initial .state, reports or caches",
+  "composeSchema": "PASS",
+  "cloudFormationLint": {
+    "errors": 0,
+    "warnings": [
+      "W3010: fixed local availability zones",
+      "W3691: local PostgreSQL engine version 16",
+      "W2501: fictitious local database password"
+    ]
+  },
+  "existingLaptopReadOnly": {
+    "workflowDefinition": "Equivalent to native HTTP ASL source",
+    "pipe": "RUNNING",
+    "publisherScheduler": "ENABLED",
+    "mutations": false
+  },
+  "pending": [
+    "Fresh WSL runtime bootstrap",
+    "HPA CPU/RAM behavior under load",
+    "Karpenter real-node acceptance in fresh environment",
+    "Node consolidation",
+    "Persistence recovery after emulator restart",
+    "AWS implementation"
+  ]
+}

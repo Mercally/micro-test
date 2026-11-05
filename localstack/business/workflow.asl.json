@@ -1,48 +1,39 @@
 {
-  "Comment": "Purchase flow. Lambda is local HTTP transport; Java owns business logic.",
-  "StartAt": "Normalize",
+  "Comment": "Native HTTP to local NLB TCP listener; no Lambda tasks. Docker network replaces AWS private connectivity only.",
+  "StartAt": "ValidateBatch",
   "TimeoutSeconds": 240,
   "States": {
-    "Normalize": {
-      "Type": "Task",
-      "Resource": "${Transport.Arn}",
-      "Parameters": {
-        "operation": "normalize",
-        "input.$": "$",
-        "owner.$": "$$.Execution.Id"
-      },
-      "TimeoutSeconds": 20,
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "TransientStepError",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
-          ],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2
-        }
-      ],
-      "Next": "Claim"
-    },
     "Claim": {
       "Type": "Task",
-      "Resource": "${Transport.Arn}",
+      "Resource": "arn:aws:states:::http:invoke",
       "Parameters": {
-        "operation": "claim",
-        "context.$": "$"
+        "ApiEndpoint.$": "States.Format('${NlbBaseUrl}/api/v1/internal/purchases/{}/run', $.saleId)",
+        "Method": "POST",
+        "InvocationConfig": {
+          "ConnectionArn": "${ConnectionArn}"
+        },
+        "Headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-Id.$": "$.correlationId"
+        },
+        "RequestBody": {
+          "eventId.$": "$.eventId",
+          "owner.$": "$.owner",
+          "operation": "claim"
+        }
       },
       "TimeoutSeconds": 20,
       "ResultPath": "$.claim",
       "Retry": [
         {
           "ErrorEquals": [
-            "TransientStepError",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
+            "States.Http.StatusCode.429",
+            "States.Http.StatusCode.500",
+            "States.Http.StatusCode.502",
+            "States.Http.StatusCode.503",
+            "States.Http.StatusCode.504",
+            "States.Http.StatusCode.408",
+            "States.Timeout"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
@@ -58,13 +49,16 @@
           "Next": "RecordFailure"
         }
       ],
-      "Next": "Claimed"
+      "Next": "Claimed",
+      "ResultSelector": {
+        "body.$": "$.ResponseBody"
+      }
     },
     "Claimed": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.claim.claimed",
+          "Variable": "$.claim.body.claimed",
           "BooleanEquals": true,
           "Next": "Document"
         }
@@ -73,20 +67,35 @@
     },
     "Document": {
       "Type": "Task",
-      "Resource": "${Transport.Arn}",
+      "Resource": "arn:aws:states:::http:invoke",
       "Parameters": {
-        "operation": "document",
-        "context.$": "$"
+        "ApiEndpoint.$": "States.Format('${NlbBaseUrl}/api/v1/internal/purchases/{}/run', $.saleId)",
+        "Method": "POST",
+        "InvocationConfig": {
+          "ConnectionArn": "${ConnectionArn}"
+        },
+        "Headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-Id.$": "$.correlationId"
+        },
+        "RequestBody": {
+          "eventId.$": "$.eventId",
+          "owner.$": "$.owner",
+          "operation": "document"
+        }
       },
       "TimeoutSeconds": 20,
       "ResultPath": "$.document",
       "Retry": [
         {
           "ErrorEquals": [
-            "TransientStepError",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
+            "States.Http.StatusCode.429",
+            "States.Http.StatusCode.500",
+            "States.Http.StatusCode.502",
+            "States.Http.StatusCode.503",
+            "States.Http.StatusCode.504",
+            "States.Http.StatusCode.408",
+            "States.Timeout"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
@@ -102,24 +111,43 @@
           "Next": "RecordFailure"
         }
       ],
-      "Next": "Policy"
+      "Next": "Policy",
+      "ResultSelector": {
+        "body.$": "$.ResponseBody"
+      }
     },
     "Policy": {
       "Type": "Task",
-      "Resource": "${Transport.Arn}",
+      "Resource": "arn:aws:states:::http:invoke",
       "Parameters": {
-        "operation": "policy",
-        "context.$": "$"
+        "ApiEndpoint.$": "States.Format('${NlbBaseUrl}/api/v1/internal/purchases/{}/run', $.saleId)",
+        "Method": "POST",
+        "InvocationConfig": {
+          "ConnectionArn": "${ConnectionArn}"
+        },
+        "Headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-Id.$": "$.correlationId"
+        },
+        "RequestBody": {
+          "eventId.$": "$.eventId",
+          "owner.$": "$.owner",
+          "operation": "policy",
+          "documentId.$": "$.document.body.documentId"
+        }
       },
       "TimeoutSeconds": 20,
       "ResultPath": "$.policy",
       "Retry": [
         {
           "ErrorEquals": [
-            "TransientStepError",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
+            "States.Http.StatusCode.429",
+            "States.Http.StatusCode.500",
+            "States.Http.StatusCode.502",
+            "States.Http.StatusCode.503",
+            "States.Http.StatusCode.504",
+            "States.Http.StatusCode.408",
+            "States.Timeout"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
@@ -135,24 +163,44 @@
           "Next": "RecordFailure"
         }
       ],
-      "Next": "Upload"
+      "Next": "Upload",
+      "ResultSelector": {
+        "body.$": "$.ResponseBody"
+      }
     },
     "Upload": {
       "Type": "Task",
-      "Resource": "${Transport.Arn}",
+      "Resource": "arn:aws:states:::http:invoke",
       "Parameters": {
-        "operation": "upload",
-        "context.$": "$"
+        "ApiEndpoint.$": "States.Format('${NlbBaseUrl}/api/v1/internal/purchases/{}/run', $.saleId)",
+        "Method": "POST",
+        "InvocationConfig": {
+          "ConnectionArn": "${ConnectionArn}"
+        },
+        "Headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-Id.$": "$.correlationId"
+        },
+        "RequestBody": {
+          "eventId.$": "$.eventId",
+          "owner.$": "$.owner",
+          "operation": "upload",
+          "documentId.$": "$.document.body.documentId",
+          "policyId.$": "$.policy.body.policyId"
+        }
       },
       "TimeoutSeconds": 20,
       "ResultPath": "$.upload",
       "Retry": [
         {
           "ErrorEquals": [
-            "TransientStepError",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
+            "States.Http.StatusCode.429",
+            "States.Http.StatusCode.500",
+            "States.Http.StatusCode.502",
+            "States.Http.StatusCode.503",
+            "States.Http.StatusCode.504",
+            "States.Http.StatusCode.408",
+            "States.Timeout"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
@@ -168,24 +216,44 @@
           "Next": "RecordFailure"
         }
       ],
-      "Next": "CompletePolicy"
+      "Next": "CompletePolicy",
+      "ResultSelector": {
+        "body.$": "$.ResponseBody"
+      }
     },
     "CompletePolicy": {
       "Type": "Task",
-      "Resource": "${Transport.Arn}",
+      "Resource": "arn:aws:states:::http:invoke",
       "Parameters": {
-        "operation": "completePolicy",
-        "context.$": "$"
+        "ApiEndpoint.$": "States.Format('${NlbBaseUrl}/api/v1/internal/purchases/{}/run', $.saleId)",
+        "Method": "POST",
+        "InvocationConfig": {
+          "ConnectionArn": "${ConnectionArn}"
+        },
+        "Headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-Id.$": "$.correlationId"
+        },
+        "RequestBody": {
+          "eventId.$": "$.eventId",
+          "owner.$": "$.owner",
+          "operation": "completePolicy",
+          "documentId.$": "$.document.body.documentId",
+          "policyId.$": "$.policy.body.policyId"
+        }
       },
       "TimeoutSeconds": 20,
       "ResultPath": "$.completion",
       "Retry": [
         {
           "ErrorEquals": [
-            "TransientStepError",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
+            "States.Http.StatusCode.429",
+            "States.Http.StatusCode.500",
+            "States.Http.StatusCode.502",
+            "States.Http.StatusCode.503",
+            "States.Http.StatusCode.504",
+            "States.Http.StatusCode.408",
+            "States.Timeout"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
@@ -201,24 +269,44 @@
           "Next": "RecordFailure"
         }
       ],
-      "Next": "Release"
+      "Next": "Release",
+      "ResultSelector": {
+        "body.$": "$.ResponseBody"
+      }
     },
     "Release": {
       "Type": "Task",
-      "Resource": "${Transport.Arn}",
+      "Resource": "arn:aws:states:::http:invoke",
       "Parameters": {
-        "operation": "release",
-        "context.$": "$"
+        "ApiEndpoint.$": "States.Format('${NlbBaseUrl}/api/v1/internal/purchases/{}/run', $.saleId)",
+        "Method": "POST",
+        "InvocationConfig": {
+          "ConnectionArn": "${ConnectionArn}"
+        },
+        "Headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-Id.$": "$.correlationId"
+        },
+        "RequestBody": {
+          "eventId.$": "$.eventId",
+          "owner.$": "$.owner",
+          "operation": "release",
+          "documentId.$": "$.document.body.documentId",
+          "policyId.$": "$.policy.body.policyId"
+        }
       },
       "TimeoutSeconds": 20,
       "ResultPath": "$.release",
       "Retry": [
         {
           "ErrorEquals": [
-            "TransientStepError",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
+            "States.Http.StatusCode.429",
+            "States.Http.StatusCode.500",
+            "States.Http.StatusCode.502",
+            "States.Http.StatusCode.503",
+            "States.Http.StatusCode.504",
+            "States.Http.StatusCode.408",
+            "States.Timeout"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
@@ -234,24 +322,44 @@
           "Next": "RecordFailure"
         }
       ],
-      "Next": "Finish"
+      "Next": "Finish",
+      "ResultSelector": {
+        "body.$": "$.ResponseBody"
+      }
     },
     "Finish": {
       "Type": "Task",
-      "Resource": "${Transport.Arn}",
+      "Resource": "arn:aws:states:::http:invoke",
       "Parameters": {
-        "operation": "finish",
-        "context.$": "$"
+        "ApiEndpoint.$": "States.Format('${NlbBaseUrl}/api/v1/internal/purchases/{}/run', $.saleId)",
+        "Method": "POST",
+        "InvocationConfig": {
+          "ConnectionArn": "${ConnectionArn}"
+        },
+        "Headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-Id.$": "$.correlationId"
+        },
+        "RequestBody": {
+          "eventId.$": "$.eventId",
+          "owner.$": "$.owner",
+          "operation": "finish",
+          "documentId.$": "$.document.body.documentId",
+          "policyId.$": "$.policy.body.policyId"
+        }
       },
       "TimeoutSeconds": 20,
       "ResultPath": "$.result",
       "Retry": [
         {
           "ErrorEquals": [
-            "TransientStepError",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
+            "States.Http.StatusCode.429",
+            "States.Http.StatusCode.500",
+            "States.Http.StatusCode.502",
+            "States.Http.StatusCode.503",
+            "States.Http.StatusCode.504",
+            "States.Http.StatusCode.408",
+            "States.Timeout"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
@@ -267,24 +375,43 @@
           "Next": "RecordFailure"
         }
       ],
-      "Next": "Completed"
+      "Next": "Completed",
+      "ResultSelector": {
+        "body.$": "$.ResponseBody"
+      }
     },
     "RecordFailure": {
       "Type": "Task",
-      "Resource": "${Transport.Arn}",
+      "Resource": "arn:aws:states:::http:invoke",
       "Parameters": {
-        "operation": "fail",
-        "context.$": "$"
+        "ApiEndpoint.$": "States.Format('${NlbBaseUrl}/api/v1/internal/purchases/{}/run', $.saleId)",
+        "Method": "POST",
+        "InvocationConfig": {
+          "ConnectionArn": "${ConnectionArn}"
+        },
+        "Headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-Id.$": "$.correlationId"
+        },
+        "RequestBody": {
+          "eventId.$": "$.eventId",
+          "owner.$": "$.owner",
+          "operation": "fail",
+          "error.$": "States.JsonToString($.failure)"
+        }
       },
       "TimeoutSeconds": 20,
       "ResultPath": "$.recordedFailure",
       "Retry": [
         {
           "ErrorEquals": [
-            "TransientStepError",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
+            "States.Http.StatusCode.429",
+            "States.Http.StatusCode.500",
+            "States.Http.StatusCode.502",
+            "States.Http.StatusCode.503",
+            "States.Http.StatusCode.504",
+            "States.Http.StatusCode.408",
+            "States.Timeout"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
@@ -300,7 +427,10 @@
           "Next": "Failed"
         }
       ],
-      "Next": "Failed"
+      "Next": "Failed",
+      "ResultSelector": {
+        "body.$": "$.ResponseBody"
+      }
     },
     "Failed": {
       "Type": "Fail",
@@ -312,6 +442,76 @@
     },
     "Completed": {
       "Type": "Succeed"
+    },
+    "ValidateBatch": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$[0]",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$[1]",
+              "IsPresent": false
+            },
+            {
+              "Variable": "$[0].eventSource",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$[0].eventSource",
+              "StringEquals": "aws:sqs"
+            },
+            {
+              "Variable": "$[0].body",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$[0].body",
+              "IsString": true
+            }
+          ],
+          "Next": "ParseEvent"
+        }
+      ],
+      "Default": "InvalidEvent"
+    },
+    "ParseEvent": {
+      "Type": "Pass",
+      "Parameters": {
+        "event.$": "States.StringToJson($[0].body)",
+        "owner.$": "$$.Execution.Id"
+      },
+      "Next": "ValidateEvent"
+    },
+    "ValidateEvent": {
+      "Type": "Choice",
+      "QueryLanguage": "JSONata",
+      "Choices": [
+        {
+          "Condition": "{% $type($states.input.event) = 'object' and $states.input.event.type = 'PurchaseAccepted' and $type($states.input.event.version) = 'number' and $states.input.event.version = 1 and $type($states.input.event.generation) = 'number' and $states.input.event.generation >= 1 and $floor($states.input.event.generation) = $states.input.event.generation and $type($states.input.event.eventId) = 'string' and $exists($match($states.input.event.eventId, /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/)) and $type($states.input.event.saleId) = 'string' and $exists($match($states.input.event.saleId, /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/)) and $type($states.input.event.correlationId) = 'string' and $exists($match($states.input.event.correlationId, /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/)) and $states.input.event.saleId = $states.input.event.correlationId %}",
+          "Next": "Normalize"
+        }
+      ],
+      "Default": "InvalidEvent"
+    },
+    "Normalize": {
+      "Type": "Pass",
+      "Parameters": {
+        "eventId.$": "$.event.eventId",
+        "saleId.$": "$.event.saleId",
+        "correlationId.$": "$.event.correlationId",
+        "generation.$": "$.event.generation",
+        "owner.$": "$.owner"
+      },
+      "Next": "Claim"
+    },
+    "InvalidEvent": {
+      "Type": "Fail",
+      "Error": "InvalidEvent",
+      "Cause": "Expected one valid PurchaseAccepted SQS event"
     }
   }
 }

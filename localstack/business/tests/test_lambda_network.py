@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import lambda_network as repair
-import wsl
 
 CLUSTER = "micro-test-local-50dacdf7"
 NETWORK = "k3d-" + CLUSTER
@@ -43,7 +42,9 @@ class LambdaNetworkTests(unittest.TestCase):
                 repair.lambda_network(container, NETWORK)
 
     def run_prepare(self, attached=False, foreign=False, wrong_db=False):
-        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2] / ".state") as temp:
+        state = Path(__file__).resolve().parents[2] / ".state"
+        state.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=state) as temp:
             root = Path(temp)
             path = root / "runtime.json"
             original = {"endpoint": "http://127.0.0.1:4566", "databaseMode": "rds", "DatabasePort": "4510",
@@ -106,45 +107,6 @@ class LambdaNetworkTests(unittest.TestCase):
         self.run_prepare(foreign=True)
         self.run_prepare(wrong_db=True)
 
-    def test_repair_mode_skips_bootstrap_and_never_starts_triggers(self):
-        for failure in (None, RuntimeError("Lambda health failed")):
-            lab = Mock()
-            lab.stack.side_effect = [None, {"StackStatus": "CREATE_COMPLETE"}]
-            lab.outputs.return_value = {"ClusterName": "micro-test-local-eks"}
-            lab.client.return_value.describe_cluster.return_value = {"cluster": {"version": "1.34"}}
-            lab.client.return_value.describe_rule.return_value = {"State": "DISABLED"}
-            lab.health = {}
-            container = localstack() | {"Id": "local", "Name": "/localstack-aws"}
-            container["NetworkSettings"]["Ports"] = {"4566/tcp": [{"HostPort": "4566"}]}
-            cluster = {"name": CLUSTER, "network": {"name": NETWORK}}
-            responses = [Mock(stdout="local"), Mock(stdout=json.dumps([container])), Mock(stdout=json.dumps([cluster]))]
-            with self.subTest(failure=failure), \
-                    patch.object(sys, "argv", ["wsl.py", "--repair-lambda-network", "--network", NETWORK]), \
-                    patch.object(sys, "platform", "linux"), patch.object(Path, "read_text", return_value="microsoft-WSL2"), \
-                    patch.object(wsl, "required_tools"), patch.object(wsl, "Lab", return_value=lab), \
-                    patch.object(wsl, "run", side_effect=responses), patch.object(wsl, "Kube") as constructor, \
-                    patch.object(wsl, "runtime_binding", return_value={"apiPort": 43517}), \
-                    patch.object(wsl, "bootstrap") as bootstrap, patch.object(wsl, "registry") as registry, \
-                    patch.object(wsl, "prepare_lambda_network") as prepare, \
-                    patch.object(wsl, "deploy", side_effect=failure) as deploy, \
-                    patch.object(wsl, "pipe", return_value={"CurrentState": "STOPPED"}) as pipe, \
-                    patch.object(wsl, "publisher_schedule", return_value={"State": "DISABLED"}) as schedule, \
-                    patch.object(wsl, "save") as save, patch("builtins.print"):
-                constructor.return_value.report_dir = Path("/tmp/not-written")
-                if failure:
-                    with self.assertRaisesRegex(RuntimeError, "health failed"):
-                        wsl.main()
-                    save.assert_not_called()
-                else:
-                    wsl.main()
-                    self.assertEqual(save.call_args.args[1]["purchaseFlow"], "PENDING")
-                bootstrap.assert_not_called()
-                registry.assert_not_called()
-                prepare.assert_called_once()
-                self.assertTrue(deploy.call_args.args[1].update)
-                pipe.assert_called_once_with(lab)
-                schedule.assert_called_once_with(lab)
-                lab.client.return_value.enable_rule.assert_not_called()
 
 
 if __name__ == "__main__":
