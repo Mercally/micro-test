@@ -242,6 +242,10 @@ def deploy(lab, args):
     lab.client("s3").put_object(Bucket=lab.outputs("business-artifacts")["BucketName"], Key=key, Body=archive.read_bytes())
     parameters = {k: runtime[k] for k in ("MicroBaseUrl", "RuntimeEndpoint", "DatabaseHost", "DatabasePort")}
     body = template("business")
+    # Preserve the explicitly selected HTTP/NLB mode on subsequent WSL deployments.
+    from http_workflow import live_http, configure, route
+    if lab.stack(PREFIX + "business") and live_http(lab):
+        body = configure(body, route(lab))
     # API deployments are snapshots. A new code/runtime target must redeploy its stage.
     deployment = "Deployment" + hashlib.sha256((key + runtime["MicroBaseUrl"] + json.dumps(body, sort_keys=True)).encode()).hexdigest()[:12]
     body["Resources"][deployment] = body["Resources"].pop("Deployment")
@@ -254,7 +258,11 @@ def deploy(lab, args):
         lab.client("lambda").get_waiter("function_updated_v2").wait(FunctionName=PREFIX + function)
     if not invoke(lab, "publisher", {"health": True})["schemaReady"]:
         raise ValueError("Publisher reaches PostgreSQL but application outbox schema is missing; complete WSL micro bootstrap")
-    invoke(lab, "transport", {"operation": "health"})
+    if live_http(lab):
+        from http_workflow import health
+        health(lab)
+    else:
+        invoke(lab, "transport", {"operation": "health"})
     print("Runtime reachable. Run 'start', then 'http' and 'test'.")
 
 
@@ -395,7 +403,7 @@ def smoke(lab, proof):
     transient_runs = wait_executions(lab, transient["eventId"])
     history = lab.client("stepfunctions").get_execution_history(executionArn=transient_runs[0]["executionArn"], maxResults=1000)["events"]
     failures = [e for e in history if e.get("type") in ("TaskFailed", "LambdaFunctionFailed")
-                and "TransientStepError" in json.dumps(e, default=str)]
+                and any(error in json.dumps(e, default=str) for error in ("TransientStepError", "States.Http.StatusCode.503"))]
     assert len(failures) >= 2, "Controlled transient failures were not observed in execution history"
     proof["transient"] = {"status": "PASS", "sale": recovered, "executions": transient_runs, "transientFailures": len(failures)}
     _, permanent = purchase(lab, bearer, "upload:permanent:1")
@@ -513,7 +521,9 @@ def main():
         elif args.command == "start":
             if not invoke(lab, "publisher", {"health": True})["schemaReady"]:
                 raise ValueError("Application outbox schema missing; complete WSL bootstrap")
-            invoke(lab, "transport", {"operation": "health"})
+            from http_workflow import live_http, health
+            if live_http(lab): health(lab)
+            else: invoke(lab, "transport", {"operation": "health"})
             pipe(lab, "RUNNING")
             publisher_schedule(lab, True)
         elif args.command == "stop":

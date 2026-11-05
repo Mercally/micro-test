@@ -1,0 +1,3 @@
+# Only OTLP wire messages; no app SDK instrumentation is installed by this bridge.
+opentelemetry-proto==1.38.0
+protobuf==6.33.6

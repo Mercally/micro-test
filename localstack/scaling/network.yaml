@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LocalStack-only NLB and isolated HTTP feasibility probe. No business routing changes.
+Parameters:
+  NlbRuntimePort:
+    Type: Number
+    MinValue: 1
+    MaxValue: 65535
+    Description: Observed TCP port returned by DescribeListeners, not the LocalStack API gateway port.
+Resources:
+  Nlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: micro-test-local-nlb
+      Type: network
+      Scheme: internal
+      Subnets:
+        - Fn::ImportValue: micro-test-local-generala
+        - Fn::ImportValue: micro-test-local-generalb
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  GatewayTargets:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: micro-test-local-gateway
+      Protocol: TCP
+      Port: 8080
+      TargetType: ip
+      VpcId: {Fn::ImportValue: micro-test-local-vpc}
+      HealthCheckProtocol: TCP
+      Tags: [{Key: Lab, Value: micro-test-local}]
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: {Ref: Nlb}
+      Protocol: TCP
+      Port: 80
+      DefaultActions: [{Type: forward, TargetGroupArn: {Ref: GatewayTargets}}]
+  Connection:
+    Type: AWS::Events::Connection
+    Properties:
+      Name: micro-test-local-http-probe
+      AuthorizationType: API_KEY
+      AuthParameters:
+        ApiKeyAuthParameters:
+          ApiKeyName: X-Lab-Probe
+          ApiKeyValue: local-test-only
+  ProbeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: states.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: local-http-probe
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:InvokeHTTPEndpoint
+                Resource: '*'
+                Condition:
+                  StringEquals: {states:HTTPMethod: GET}
+                  StringLike:
+                    states:HTTPEndpoint:
+                      Fn::Sub: 'http://${Nlb.DNSName}:${NlbRuntimePort}/actuator/health'
+              - Effect: Allow
+                Action: events:RetrieveConnectionCredentials
+                Resource: {Fn::GetAtt: [Connection, Arn]}
+              - Effect: Allow
+                Action: [secretsmanager:GetSecretValue, secretsmanager:DescribeSecret]
+                Resource: {Fn::GetAtt: [Connection, SecretArn]}
+  Probe:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: micro-test-local-http-probe
+      StateMachineType: STANDARD
+      RoleArn: {Fn::GetAtt: [ProbeRole, Arn]}
+      DefinitionString:
+        Fn::Sub: >-
+          {"StartAt":"Health","TimeoutSeconds":30,"States":{"Health":{"Type":"Task","Resource":"arn:aws:states:::http:invoke","Parameters":{"ApiEndpoint":"http://${Nlb.DNSName}:${NlbRuntimePort}/actuator/health","Method":"GET","InvocationConfig":{"ConnectionArn":"${Connection.Arn}"}},"TimeoutSeconds":20,"End":true}}}
+      Tags: [{Key: Lab, Value: micro-test-local}]
+Outputs:
+  NlbArn: {Value: {Ref: Nlb}}
+  NlbDns: {Value: {Fn::GetAtt: [Nlb, DNSName]}}
+  TargetGroupArn: {Value: {Ref: GatewayTargets}}
+  ConnectionArn: {Value: {Fn::GetAtt: [Connection, Arn]}}
+  ProbeArn: {Value: {Ref: Probe}}
+  ProbeRoleArn: {Value: {Fn::GetAtt: [ProbeRole, Arn]}}

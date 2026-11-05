@@ -41,7 +41,7 @@ public class PurchaseController {
     public record RunRequest(@NotNull UUID eventId, @NotBlank String owner, @NotBlank String operation,
             UUID documentId, UUID policyId, String error) {}
 
-    // Only the Lambda transport reaches this route. API Gateway exposes no internal routes.
+    // Workflow traffic enters through the Istio gateway; API Gateway exposes no internal routes.
     @PostMapping("/internal/purchases/{saleId}/run")
     public Map<String, Object> run(@PathVariable UUID saleId, @Valid @RequestBody RunRequest run) {
         if ("claim".equals(run.operation())) return purchases.claim(saleId, run.eventId(), run.owner());

@@ -1,0 +1,43 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: micro-test-local-micro
+  namespace: micro-test-local-general
+  labels:
+    lab: micro-test-local
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: micro-test-local-micro
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: micro
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: ContainerResource
+      containerResource:
+        name: memory
+        container: micro
+        target:
+          type: AverageValue
+          # Initial lab threshold, not a measured production capacity target.
+          averageValue: 512Mi
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60

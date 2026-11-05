@@ -80,6 +80,12 @@ localstack/.venv/bin/python localstack/business/business.py test --endpoint "$LA
 
 ## Observar y detener
 
+Visor gráfico disponible en Mac: [Aspire local](http://127.0.0.1:18888/traces).
+Busca compra por `saleId`; abre waterfall de pasos y reintentos. Para progreso
+activo usa Structured logs filtrados por atributo `saleId`.
+[Arranque, ejercicios y alcance de telemetría](../observability/README.md).
+Vista reconstruida desde historial SFN y logs, sin spans internos HTTP/SQL.
+
 ```bash
 aws --profile localstack-laptop --endpoint-url "$LAB_ENDPOINT" --region us-east-1 \
   logs tail /aws/lambda/micro-test-local-publisher --since 10m
