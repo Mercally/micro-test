@@ -6,6 +6,18 @@ Esta es la única entrada para esa próxima etapa, después de validar laborator
 Plantillas anteriores fueron retiradas porque representaban diseños distintos;
 su historial permanece en Git, no son una base de despliegue aprobada.
 
+**Seguimiento:** [plan AWS, respuestas y prompt base](PLAN_AWS.md).
+Este documento se completará con las decisiones del usuario, las plantillas
+creadas, sus dependencias y la evidencia de cada etapa.
+
+## Validar sin crear recursos y ejecutar por etapas
+
+Ver [guía CloudFormation: validación, orden y ejecución manual](CLOUDFORMATION.md).
+Incluye validación offline de las nueve plantillas locales actuales, diferencias
+entre `validate-template` y change sets, y procedimiento AWS por stack.
+El orden AWS es propuesto: faltan los YAML reales y sus parámetros definitivos.
+La validación local no convierte las plantillas LocalStack en plantillas AWS.
+
 ## Arquitectura que se implementará
 
 ```mermaid
@@ -38,7 +50,8 @@ No es promesa de precio, paridad LocalStack ni autorización para desplegar.
 
 ## Antes de generar plantillas
 
-Cerrar con usuario: cuenta/región, dos o tres AZ, presupuesto, volumen/SLO,
+Decidido: exactamente dos AZ para subredes y workloads administrados.
+Cerrar con usuario: cuenta/región, presupuesto, volumen/SLO,
 RTO/RPO, dominio y certificado, proveedor de identidad, conectividad privada de
 HTTP Tasks, endpoints/egreso, tamaño de DB y distribución de workloads Karpenter.
 Mantener Pipes por ahora: no ofrece limitador configurable de ejecuciones por

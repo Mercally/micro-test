@@ -10,7 +10,8 @@ Fecha de consulta de documentación/precios: 2026-11-05.
 Prioridad del usuario: costo bajo; aceptación rápida; procesamiento asíncrono
 puede tener mayor latencia. Step Functions debe llamar por HTTP a servicios detrás
 de un NLB interno e Istio, sin Lambda de transporte. Se mantiene Lambda publisher.
-Región de referencia: us-east-1. Base propuesta: dos AZ; tercera según SLO.
+Región de referencia: us-east-1. Exactamente dos AZ para subredes y workloads
+administrados, según el requisito vigente.
 Volumen, presupuesto mensual, RTO/RPO y duración máxima de pasos siguen pendientes.
 No se afirma que esta propuesta sea el mínimo costo absoluto sin esas cifras.
 
