@@ -1,11 +1,18 @@
 # Visor de compras con Aspire
 
-Dashboard standalone en Mac, conectado al LocalStack de laptop. No necesita
-ExecutionArn: usa el `saleId` devuelto por `POST /purchases`.
+Dashboard standalone opcional. No necesita ExecutionArn: usa el `saleId` devuelto
+por `POST /purchases`. `up` no instala Aspire CLI ni arranca dashboard.
+
+**Emulador nuevo:** gateway publica solo `127.0.0.1:4566` en laptop. Ejecuta observador
+en WSL con ese endpoint; requiere Aspire CLI instalado allí. Esa variante todavía
+no tiene validación runtime registrada. Visor anterior en Mac usaba endpoint
+Tailscale del emulador retirado; no se conecta automáticamente al nuevo.
 
 ## Abrir y practicar
 
-1. Abre <http://127.0.0.1:18888/traces> **en Mac**.
+1. Arranca observador según sección siguiente y abre <http://127.0.0.1:18888/traces>
+   donde esté accesible su puerto local. Para visor WSL, utiliza navegador de laptop
+   con acceso a loopback WSL; dirección Mac correspondía al visor anterior.
 2. Envía **Accept** desde `localstack/.state/business/purchase.http`.
 3. Copia `saleId`. En **Traces**, cuando termine, búscalo en **Filter** y abre
    `Compra <saleId>`. Verás waterfall, pasos e intentos HTTP bajo recurso `http-nlb`. Trazas antiguas conservan `lambda-transport`.
@@ -29,13 +36,15 @@ workflow y tampoco aparecen en este visor.
 
 ## Arrancar o detener
 
-Desde raíz del repositorio **en Mac**, con Aspire CLI 13.6.x instalado y en PATH:
+Desde raíz del repositorio **en WSL para emulador nuevo**, con Aspire CLI 13.6.x
+instalado y en PATH. Para visor Mac anterior, usar endpoint Tailscale únicamente
+si sigue existiendo un gateway remoto accesible:
 
 ```bash
 export PATH="$HOME/.aspire/bin:$PATH"
 localstack/.venv/bin/python -m pip install -r localstack/observability/requirements.txt
 localstack/.venv/bin/python localstack/observability/observe.py start \
-  --endpoint http://100.100.154.68:4566
+  --endpoint http://127.0.0.1:4566
 localstack/.venv/bin/python localstack/observability/observe.py status
 ```
 
@@ -50,12 +59,12 @@ localstack/.venv/bin/python localstack/observability/observe.py status
 
 Espera `supervisorAlive: false` antes de arrancar de nuevo. Detiene solamente
 observador y dashboard. No modifica triggers, pods ni LocalStack. No arranca
-automáticamente al reiniciar Mac. No hace falta ejecutar nada nuevo en WSL para
-usar visor de Mac.
+automáticamente al reiniciar equipo. Ejecuta stop/status en el mismo equipo y
+checkout donde arrancaste observador.
 
-Para alojarlo en WSL, copia esta carpeta al checkout actualizado, instala Aspire
-CLI 13.6.x y dependencias del lab/observador, usa los mismos comandos con
-`--endpoint http://127.0.0.1:4566`. Esa variante no fue ejecutada en laptop.
+Usa checkout actualizado y dependencias del lab/observador en el equipo elegido.
+Configuración WSL anterior es la ruta preparada para el nuevo gateway; todavía
+no se ha certificado su ejecución en laptop.
 Instalación oficial: <https://aspire.dev/dashboard/standalone/>.
 
 ## Qué representa

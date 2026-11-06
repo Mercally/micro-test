@@ -1,13 +1,15 @@
 # Practicar compras desde un .http
 
-Usa scripts actualizados con EventBridge Scheduler. El laboratorio está en laptop;
-Mac accede por `http://100.100.154.68:4566`, WSL por `http://127.0.0.1:4566`.
+Usa scripts actualizados con EventBridge Scheduler. Para el arranque nuevo, ejecuta
+cliente HTTP y comandos dentro de WSL, contra `http://127.0.0.1:4566`. Compose publica
+solo loopback; acceso desde Mac no se configura automáticamente.
 Arranque central: [../README.md](../README.md). Emulador nuevo crea solo Scheduler;
 compatibilidad con regla antigua se conserva únicamente al operar lab anterior.
 
 ## Generar requests
 
-Desde raíz del repositorio en WSL:
+Desde raíz del repositorio en WSL, después de que `up` termine con PASS. No reanudes
+triggers para saltarte una etapa fallida del bootstrap:
 
 ```bash
 export LAB_ENDPOINT=http://127.0.0.1:4566
@@ -16,8 +18,10 @@ export LAB_ENDPOINT=http://127.0.0.1:4566
 ./localstack/lab http --endpoint "$LAB_ENDPOINT"
 ```
 
-En Mac usa `export LAB_ENDPOINT=http://100.100.154.68:4566` y mismos comandos.
-Abre `localstack/.state/business/purchase.http` con extensión VS Code REST Client.
+El endpoint Mac `http://100.100.154.68:4566` correspondía al laboratorio anterior;
+no lo uses para el emulador nuevo sin configurar y verificar acceso remoto.
+Abre `localstack/.state/business/purchase.http` con extensión VS Code REST Client
+ejecutándose en ventana Remote WSL del editor.
 Archivo generado contiene tokens locales, queda fuera de Git y vence en una hora;
 repite comando `http` para renovarlo. La plantilla bajo `business/requests/` contiene
 marcadores y no se envía directamente.
@@ -80,7 +84,9 @@ lógico. Entrega es al menos una vez. La suite automatizada comprueba este caso:
 
 ## Observar y detener
 
-Visor gráfico disponible en Mac: [Aspire local](http://127.0.0.1:18888/traces).
+Visor gráfico opcional: [Aspire local](http://127.0.0.1:18888/traces), después de
+arrancarlo en el equipo elegido. `up` no lo inicia; visor Mac anterior no obtiene
+acceso automáticamente al nuevo emulador de WSL.
 Busca compra por `saleId`; abre waterfall de pasos y reintentos. Para progreso
 activo usa Structured logs filtrados por atributo `saleId`.
 [Arranque, ejercicios y alcance de telemetría](../observability/README.md).
