@@ -18,6 +18,21 @@ CHART_SHA = '381a6a73c23f48af9890ab31bd4d8bacbcd2d3271be98e4cd5aab5cebb3e6305'
 LABEL = {'lab': 'micro-test-local'}
 RESTRICTED = {'local-aws-only': 'true'}
 
+# A CNI may DROP (timeout) or REJECT (socket error). Emit a structured result;
+# kubectl/exec failures and unrelated OS errors must never count as enforcement.
+TCP_PROBE = '''import errno,json,socket,sys
+try:
+ socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=3).close()
+except OSError as error:
+ if not isinstance(error, TimeoutError) and error.errno not in (
+   errno.ETIMEDOUT, errno.ECONNREFUSED, errno.EHOSTUNREACH,
+   errno.ENETUNREACH, errno.EACCES, errno.EPERM):
+  raise
+ print(json.dumps({"reachable": False, "errorType": type(error).__name__, "errno": error.errno}))
+ sys.exit(42)
+print(json.dumps({"reachable": True}))
+'''
+
 
 def helm_binary():
     current = shutil.which('helm')
@@ -113,27 +128,61 @@ def network_gate(kube, address, denied_port):
                                     'resources': {'requests': {'cpu': '10m', 'memory': '32Mi'},
                                                   'limits': {'cpu': '100m', 'memory': '64Mi'}}}]}}
     kube.apply_data(pod)
-    try:
-        kube.call('-n', NS, 'wait', '--for=condition=Ready', 'pod/' + name, '--timeout=180s')
-        code = 'import socket; socket.create_connection((' + repr(address) + ', ' + str(denied_port) + '), timeout=3).close()'
-        kube.call('-n', NS, 'exec', name, '--', 'python', '-c', code)  # Baseline must succeed.
-        kube.call('-n', NS, 'label', 'pod', name, 'local-aws-only=true')
-        blocked_code = ('import socket,sys\ntry:\n socket.create_connection(('
-                        + repr(address) + ', ' + str(denied_port) + '), timeout=3).close()\n'
-                        'except TimeoutError:\n sys.exit(42)\n')
+    proof = {'status': 'RUNNING', 'phase': 'baseline', 'allowedPort': 4566, 'blockedPort': denied_port}
+    def probe():
+        response = kube.call('-n', NS, 'exec', name, '--', 'python', '-c', TCP_PROBE,
+                             address, str(denied_port), check=False)
+        proof['lastExitCode'] = response.returncode
+        proof['lastProbeStderr'] = response.stderr[-1000:]
+        try:
+            result = json.loads(response.stdout)
+        except (ValueError, TypeError):
+            raise RuntimeError(f'TCP probe did not return valid JSON (exit {response.returncode}); not proof of network denial')
+        if (not isinstance(result, dict) or response.returncode not in (0, 42)
+                or result.get('reachable') is not (response.returncode == 0)):
+            raise RuntimeError(f'TCP probe failed (exit {response.returncode}); not proof of network denial')
+        proof['lastProbe'] = result
+        return result
+
+    def await_reachability(reachable):
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            rejected = kube.call('-n', NS, 'exec', name, '--', 'python', '-c', blocked_code, check=False)
-            if rejected.returncode == 42:
-                # Confirm the pod still executes and LocalStack's allowed API remains reachable.
-                allowed = 'import urllib.request,json; r=json.load(urllib.request.urlopen(' + repr(f'http://{address}:4566/_localstack/health') + ',timeout=5)); assert "services" in r; print("PASS")'
-                kube.call('-n', NS, 'exec', name, '--', 'python', '-c', allowed)
-                return {'status': 'PASS', 'allowedPort': 4566, 'blockedPort': denied_port,
-                        'scope': 'CNI enforcement checked against a previously reachable local port'}
+            result = probe()
+            if result['reachable'] is reachable: return result
             time.sleep(2)
-        raise RuntimeError('NetworkPolicy not enforced; refusing to start Karpenter')
+        if reachable:
+            raise RuntimeError('Unrestricted TCP connectivity did not recover; network denial not proven')
+        raise RuntimeError('Restricted pod still reaches denied port; refusing to start Karpenter')
+
+    try:
+        kube.call('-n', NS, 'wait', '--for=condition=Ready', 'pod/' + name, '--timeout=180s')
+        if not probe()['reachable']:
+            raise RuntimeError('Unrestricted TCP baseline failed; network denial not proven')
+        proof['baseline'] = True
+        kube.call('-n', NS, 'label', 'pod', name, 'local-aws-only=true')
+        proof['phase'] = 'restricted'
+        proof['blockedObservation'] = await_reachability(False)
+        # Confirm the pod still executes and LocalStack's allowed API remains reachable.
+        proof['phase'] = 'allowed-api'
+        allowed = 'import urllib.request,json; r=json.load(urllib.request.urlopen(' + repr(f'http://{address}:4566/_localstack/health') + ',timeout=5)); assert "services" in r; print("PASS")'
+        kube.call('-n', NS, 'exec', name, '--', 'python', '-c', allowed)
+        proof['allowed'] = True
+        # Only unselect this temporary probe, never relax the controller's policy.
+        # A stopped RDS listener or general network outage cannot certify this gate.
+        proof['phase'] = 'restore'
+        kube.call('-n', NS, 'label', 'pod', name, 'local-aws-only-')
+        await_reachability(True)
+        proof.update(status='PASS', phase='complete', restored=True,
+                     scope='Local TCP baseline, policy deny, allowed API, then baseline recovery; not AWS IAM parity')
+        return proof
+    except Exception as exc:
+        proof.update(status='FAIL', error=str(exc)[:1000])
+        raise
     finally:
-        kube.call('-n', NS, 'delete', 'pod', name, '--wait=false', check=False)
+        try:
+            save(kube.report_dir / 'karpenter-egress.json', proof)
+        finally:
+            kube.call('-n', NS, 'delete', 'pod', name, '--wait=false', check=False)
 
 
 def instance_profile(lab, eks_name):
@@ -198,7 +247,6 @@ def install(lab, kube, local, eks_name, network):
     kube.apply_data(egress_policy(address, api))
     print('Checking enforced local-only controller egress before installation', flush=True)
     gate = network_gate(kube, address, dbs[0]['Endpoint']['Port'])
-    save(kube.report_dir / 'karpenter-egress.json', gate)
     for doc in yaml.safe_load_all(rendered):
         if doc and doc['kind'] == 'CustomResourceDefinition':
             kube.call('apply', '--server-side', '-f', '-', input=yaml.safe_dump(doc))

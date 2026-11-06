@@ -58,6 +58,16 @@ Provider AWS 1.8.2 contra LocalStack, mismo EKS. NodePool de práctica con taint
 No usa KWOK. NodeClaim Ready por sí solo no basta: `node-test` también verifica
 providerID/EC2 local y respuesta HTTP desde nginx en worker nuevo.
 
+Antes de instalar controller, prueba de egreso exige: conexión TCP inicial a RDS,
+bloqueo al aplicar etiqueta restringida, API LocalStack 4566 todavía accesible y
+recuperación TCP al retirar etiqueta **solo del pod de prueba**. Admite timeout y
+rechazo TCP/ICMP: kube-router puede usar REJECT, no únicamente DROP
+([documentación](https://github.com/cloudnativelabs/kube-router/blob/master/docs/troubleshoot.md)).
+Errores de exec, listener caído o pérdida general de conectividad no certifican
+aislamiento. Guarda éxito/fallo y fase en `karpenter-egress.json`, dentro del
+directorio de reporte Kubernetes. Si falla, Karpenter no se instala; no deshabilites
+NetworkPolicy para continuar.
+
 ```bash
 localstack/.venv/bin/python localstack/scaling/runtime.py node-test --network RED_K3D_OBSERVADA
 kubectl --kubeconfig localstack/.state/kubeconfig get nodepools,nodeclaims,nodes

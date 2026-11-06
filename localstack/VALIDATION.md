@@ -25,7 +25,7 @@ redeplegó laboratorio existente para validar esta reorganización.
 | Plantillas locales y ASL HTTP directo | Validación estática; no equivale a CFN CREATE_COMPLETE |
 | Cleanup Docker, helpers y volúmenes en WSL | Usuario confirmó limpieza tras corregir huella; recibo final no revisado |
 | Primera instalación íntegra en WSL limpio | PENDIENTE |
-| HPA con muestras reales de CPU/RAM en instalación nueva | PENDIENTE; obligatorio en `up` |
+| HPA con muestras reales de CPU/RAM en instalación nueva | Etapa hpa superada según salida WSL; reporte detallado de métricas no revisado |
 | Karpenter → NodeClaim → worker real → HTTP | PENDIENTE; obligatorio en `up` |
 | Escalado/reducción HPA y consolidación de nodos | PENDIENTE, ejercicios separados |
 | Persistencia nueva | Configurada con volumen y PERSISTENCE=1; recuperación tras reinicio PENDIENTE |
@@ -69,8 +69,17 @@ Corregido para aceptar ese alias exacto únicamente con red/puerto comprobados
 contra Docker/EKS y normalizar a `127.0.0.1`. Conserva CA y credenciales de cliente;
 no desactiva TLS. Regresión reproducida antes del cambio. Pasan 59 tests de negocio,
 WSL y lanzador; 3 PostgreSQL omitidos. [Evidencia](evidence/kubeconfig-alias-20261105.json).
-Reintento de conexión y arranque completo siguen PENDIENTES; CREATE_COMPLETE no
-certifica salud del clúster, aplicaciones ni flujo de compra.
+Reintento WSL posterior superó Kubernetes (incluido SQL), ECR push/pull, NLB,
+negocio y etapa HPA. Arranque completo sigue PENDIENTE: falló prueba de egreso antes
+de instalar Karpenter. CREATE_COMPLETE por sí solo no certifica salud ni compra.
+
+Prueba anterior solo aceptaba TimeoutError como denegación; reproducido mismo fallo
+offline con ConnectionRefusedError. Corregida clasificación y añadida recuperación
+de conexión al retirar etiqueta del pod de prueba, sin relajar política del controller.
+Guarda diagnóstico de fallos: causa concreta WSL requiere nueva ejecución, porque
+prueba anterior descartaba errores remotos. Verificación posterior: **104 PASS,
+3 omitidas**, lint sin errores. [Evidencia](evidence/karpenter-egress-20261105.json).
+Instalación Karpenter, worker real y compra/PDF nueva todavía no certificados.
 
 ## Evidencia que falta recoger
 

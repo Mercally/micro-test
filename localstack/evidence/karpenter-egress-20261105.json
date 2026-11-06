@@ -1,0 +1,42 @@
+{
+  "date": "2026-11-05",
+  "source": "User-provided WSL bootstrap output, report 20261105T234854Z-2d52e0/bootstrap.json",
+  "observed": {
+    "cluster": "micro-test-local-b8d79075",
+    "completedStages": [
+      "emulator",
+      "foundation",
+      "kubernetes",
+      "registry",
+      "nlb",
+      "business",
+      "hpa"
+    ],
+    "kubernetes": "v1.34.9+k3s1",
+    "istio": "1.31.3",
+    "database": "RDS PostgreSQL query succeeded",
+    "ecr": "push/pull by digest passed",
+    "failedStage": "karpenter",
+    "error": "NetworkPolicy not enforced; refusing to start Karpenter",
+    "businessTriggers": "Stopped before acceptance",
+    "limits": "HPA stage completion is not load behavior proof. Purchase/node-test not reached."
+  },
+  "diagnosis": {
+    "confirmedCodeDefect": "Old TCP probe accepted only TimeoutError as denial",
+    "regression": "Same error reproduced offline for ConnectionRefusedError",
+    "liveCause": "Not yet confirmed: old gate discarded remote probe errors",
+    "fix": "Recognize bounded network errors with structured output; require baseline, deny, allowed API and recovered baseline; save failure diagnostics"
+  },
+  "offlineVerification": {
+    "command": "./localstack/lab verify",
+    "passed": 104,
+    "skipped": 3,
+    "lintErrors": 0,
+    "existingLintWarnings": [
+      "W3010",
+      "W3691",
+      "W2501"
+    ]
+  },
+  "runtimeAfterFix": "PENDING WSL retry; Karpenter controller, real worker and full purchase flow not certified"
+}
