@@ -11,6 +11,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parent
@@ -82,7 +83,13 @@ def ensure_emulator():
         with socket.socket() as check:
             check.bind(('127.0.0.1', 4566))
         if not os.environ.get('LOCALSTACK_AUTH_TOKEN'):
-            raise ValueError('LOCALSTACK_AUTH_TOKEN required in shell; never commit token')
+            token_file = Path.home() / '.config/micro-test/localstack-token'
+            if token_file.is_file() and not token_file.is_symlink():
+                if token_file.stat().st_mode & 0o077 or token_file.stat().st_uid != os.getuid():
+                    raise ValueError('LocalStack token file must belong to current user and have permissions 600')
+                os.environ['LOCALSTACK_AUTH_TOKEN'] = token_file.read_text().strip()
+            if not os.environ.get('LOCALSTACK_AUTH_TOKEN'):
+                raise ValueError('LOCALSTACK_AUTH_TOKEN or private ~/.config/micro-test/localstack-token required')
         volumes = run(DOCKER + ['volume', 'ls', '--filter', 'name=^micro-test-local_state$', '-q']).stdout.split()
         if volumes:
             volume = json.loads(run(DOCKER + ['volume', 'inspect', volumes[0]]).stdout)[0]
@@ -149,6 +156,44 @@ def pause_and_drain(lab):
         if time.monotonic() >= deadline:
             raise TimeoutError('Active workflows did not drain; triggers remain stopped')
         time.sleep(3)
+
+
+def teardown(delete_data=False):
+    """Disposable lab: purge reviewed owned runtime, keep tools' environment and reports."""
+    import cleanup
+    if not delete_data:
+        raise ValueError('down requires --delete-data; this removes lab purchases, PDFs, SQL and infrastructure')
+    require_wsl()
+    current = owned_emulator(docker_containers())
+    path = Path.home() / '.local/state/micro-test/cleanup.json'
+    if current and current['State']['Running']:
+        lab = Lab(ENDPOINT)
+        pause_and_drain(lab)
+        plan = cleanup.make_plan(cleanup.inventory(), NAME, cleanup.cloud_facts(lab))
+        unknown = [c['name'] for c in plan['unselectedContainers']
+                   if c['name'].startswith(('k3d-micro-test-local-', NAME + '-', 'localstack-ec2.'))]
+        if unknown:
+            raise ValueError('Unclassified lab helpers; review cleanup plan before deletion: ' + ', '.join(unknown))
+        cleanup.write(path, plan)
+    elif path.exists():
+        plan = json.loads(path.read_text())
+        if current and current['Id'] != plan['emulator']:
+            raise ValueError('Saved cleanup plan belongs to another emulator; inventory required')
+    else:
+        raise ValueError('No running owned emulator or saved cleanup plan; use cleanup plan first')
+    receipt = path.with_suffix('.result.json')
+    try:
+        result = cleanup.apply_plan(plan, 'purge', delete_data=True)
+        cleanup.write(receipt, result)
+        if result['status'] != 'SELECTED_SCOPE_COMPLETE':
+            raise RuntimeError('Lab teardown incomplete; inspect ' + str(receipt))
+        cleanup.files_ready(plan, cleanup.inventory())
+        cleanup.clean_files(apply=True, roots=('.state',))
+    except Exception as exc:
+        cleanup.write(receipt, {'status': 'INCOMPLETE', 'error': str(exc)[:1000]})
+        raise
+    print('PASS: lab runtime and generated state removed; source, venv and reports retained', flush=True)
+    print('Receipt: ' + str(receipt), flush=True)
 
 
 def scaling_modules():
@@ -278,16 +323,33 @@ def main():
         with exclusive_bootstrap(): cleanup.main(sys.argv[2:])
         return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['up', 'status', 'http', 'test', 'pause', 'resume', 'verify'])
+    parser.add_argument('command', choices=['up', 'down', 'status', 'http', 'test', 'pause', 'resume', 'verify'])
     parser.add_argument('--endpoint', type=endpoint, default=ENDPOINT)
     parser.add_argument('--client-endpoint', type=endpoint, default=ENDPOINT)
+    parser.add_argument('--delete-data', action='store_true', help='Required for down: discard all lab data')
     args = parser.parse_args()
+    if args.command == 'down':
+        if args.endpoint != ENDPOINT:
+            parser.error('down must run inside WSL against loopback')
+        with exclusive_bootstrap(): teardown(args.delete_data)
+        return
+    if args.delete_data:
+        parser.error('--delete-data is only valid with down')
     if args.command == 'verify':
         verify(); return
     if args.command == 'up':
         if args.endpoint != ENDPOINT:
             parser.error('up requires WSL loopback; remote bootstrap is forbidden')
-        with exclusive_bootstrap(): bootstrap(args)
+        # Public build images must not depend on Windows Desktop's interactive
+        # credential helper. ECR uses its own temporary login in kube.registry.
+        with exclusive_bootstrap(), tempfile.TemporaryDirectory(prefix='micro-test-docker-') as config:
+            previous = os.environ.get('DOCKER_CONFIG')
+            os.environ['DOCKER_CONFIG'] = config
+            try:
+                bootstrap(args)
+            finally:
+                if previous is None: os.environ.pop('DOCKER_CONFIG', None)
+                else: os.environ['DOCKER_CONFIG'] = previous
         return
     # Existing lab can be observed and exercised; no emulator lifecycle changes.
     command = {'pause': 'stop', 'resume': 'start'}.get(args.command, args.command)

@@ -3,9 +3,10 @@
 set -euo pipefail
 LAB_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "${1:-help}" == help || "${1:-}" == --help || "${1:-}" == -h ]]; then
-  printf '%s\n' 'Usage: ./localstack/lab {up|status|http|test|pause|resume|verify|cleanup} [options]' \
+  printf '%s\n' 'Usage: ./localstack/lab {up|down|status|http|test|pause|resume|verify|cleanup} [options]' \
     'up: WSL2 x86_64, Docker Desktop, Python 3.11+ with venv, curl, LocalStack token.' \
     'Starts a new owned persistent emulator; refuses the existing laptop emulator.' \
+    'down --delete-data: remove owned lab runtime/data in WSL; keep source, venv and reports.' \
     'status/http/test/pause/resume: --endpoint http://127.0.0.1:4566 (or authorized laptop endpoint).' \
     'verify: offline Python tests, CloudFormation lint and repository checks.' \
     'cleanup: plan/stop/purge/files; review ./localstack/lab cleanup --help and localstack/CLEANUP.md.'

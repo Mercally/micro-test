@@ -2,8 +2,13 @@
 
 Entrada única: `./localstack/lab cleanup`. Ejecutar desde raíz del checkout actualizado
 **dentro de WSL**, sobre `/var/run/docker.sock`. No usa AWS real ni Docker remoto.
-Primer intento WSL se bloqueó antes de modificar Docker por diferencia de huella.
-Corregida comparación de orden de montajes; borrado completo sigue pendiente de reintento.
+Para instalaciones administradas por el lanzador, `./localstack/lab down --delete-data`
+automatiza inventario, pausa, purge y eliminación de `.state`, conservando venv y
+reportes. La licencia privada en `~/.config/micro-test/localstack-token` se conserva.
+Este procedimiento detallado sirve para migrar instalaciones anteriores o revisar
+helpers que no pudieron atribuirse automáticamente.
+El 2026-11-10 se ejecutó purge real del lab roto: nueve contenedores, dos redes y
+22 volúmenes seleccionados; los dos PostgreSQL de otros proyectos se conservaron.
 
 **El laboratorio anterior tiene persistencia deshabilitada. Detener su emulador puede
 perder compras, SQL, PDFs y configuración. `purge` borra definitivamente los datos del
@@ -187,5 +192,5 @@ Tras revisar que no queden helpers de este lab ni puerto 4566 ocupado, sigue
 No reconstruye compras borradas. No arranques hasta resolver residuos del lab anterior.
 
 Recoge `bootstrap.json`, prueba de nodo Karpenter y compra/PDF. Después valida carga
-CPU/RAM y persistencia. Cleanup Docker real y ese nuevo arranque siguen **PENDIENTES**
-hasta ejecutar los comandos y revisar resultados de laptop.
+CPU/RAM y persistencia. Consulta [estado de validación](VALIDATION.md) para evidencia
+actual; no confundas reconstrucción descartable con recuperación de datos al reiniciar.

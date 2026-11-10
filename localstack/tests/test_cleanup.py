@@ -45,6 +45,19 @@ class CleanupTests(unittest.TestCase):
         self.data, self.facts = fixture()
         self.plan = cleanup.make_plan(self.data, 'localstack-aws', self.facts)
 
+    def test_runtime_only_cleanup_preserves_venv_and_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / 'localstack'
+            for name in cleanup.FILE_ROOTS:
+                (root / name).mkdir(parents=True)
+                (root / name / 'retained-or-discarded.txt').write_text('fixture')
+            with patch.object(cleanup, 'ROOT', root), patch.object(cleanup.subprocess, 'check_output', return_value=b''):
+                cleanup.clean_files(apply=True, roots=('.state',))
+                with self.assertRaises(ValueError): cleanup.clean_files(apply=True, roots=('../',))
+            self.assertFalse((root / '.state').exists())
+            self.assertTrue((root / '.venv/retained-or-discarded.txt').exists())
+            self.assertTrue((root / 'reports/retained-or-discarded.txt').exists())
+
     def test_inventory_is_scoped_and_redacted(self):
         self.assertEqual({c['id'] for c in self.plan['containers']}, {c * 64 for c in 'abc'})
         self.assertEqual(self.plan['unselectedContainers'][0]['name'], 'other-project')
@@ -58,6 +71,27 @@ class CleanupTests(unittest.TestCase):
         plan = cleanup.make_plan(self.data, 'localstack-aws', self.facts)
         self.assertEqual([c['id'] for c in plan['containers']], ['a' * 64])
         self.assertFalse(plan['networks'])
+
+    def test_k3d_tools_and_ec2_provider_worker_are_selected_by_owned_cluster_and_instance(self):
+        self.data['containers'].extend([
+            container('1', 'k3d-micro-test-local-abc-tools', 'ghcr.io/k3d-io/k3d-tools:5.9.0',
+                      labels={'k3d.cluster': 'micro-test-local-abc', 'k3d.role': 'noRole'}),
+            container('2', 'localstack-ec2.i-owned'),
+            container('3', 'localstack-ec2.i-foreign')])
+        self.data['networks'].append({'Id': '4' * 64, 'Name': 'localstack-ec2-link-local',
+                                     'Containers': {'2' * 64: {}}})
+        plan = cleanup.make_plan(self.data, 'localstack-aws', self.facts)
+        self.assertEqual({c['id'] for c in plan['containers']}, {c * 64 for c in 'abc12'})
+        self.assertEqual({n['id'] for n in plan['networks']}, {c * 64 for c in 'e4'})
+
+    def test_unknown_k3d_helper_and_shared_link_local_network_are_preserved(self):
+        self.data['containers'].append(container('1', 'unexpected', 'busybox',
+            labels={'k3d.cluster': 'micro-test-local-abc', 'k3d.role': 'noRole'}))
+        self.data['networks'].append({'Id': '4' * 64, 'Name': 'localstack-ec2-link-local',
+                                     'Containers': {'a' * 64: {}, 'd' * 64: {}}})
+        plan = cleanup.make_plan(self.data, 'localstack-aws', self.facts)
+        self.assertNotIn('b' * 64, {c['id'] for c in plan['containers']})
+        self.assertNotIn('4' * 64, {n['id'] for n in plan['networks']})
 
     def test_shared_resources_retained_even_with_explicit_selection(self):
         self.data['containers'][3]['Mounts'] = copy.deepcopy(self.data['containers'][0]['Mounts'])

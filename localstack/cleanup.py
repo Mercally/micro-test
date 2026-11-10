@@ -136,7 +136,9 @@ def make_plan(data, emulator_name, facts, extra_ids=(), extra_networks=(), extra
             flags = [a.rsplit('/', 1)[-1] for a in agent['Config'].get('Cmd') or [] if a.startswith('--kubelet-arg=provider-id=')]
             ids.append(flags[-1] if flags else None)
         if agents and all(i in facts['instances'] for i in ids) and all(
-                c['Config']['Labels'].get('k3d.role') in ('agent', 'server', 'loadbalancer') for c in nodes):
+                c['Config']['Labels'].get('k3d.role') in ('agent', 'server', 'loadbalancer') or
+                (c['Config']['Labels'].get('k3d.role') == 'noRole'
+                 and c['Config']['Image'].startswith('ghcr.io/k3d-io/k3d-tools:')) for c in nodes):
             owned_clusters.append(cluster)
             for c in nodes: selected[c['Id']] = 'k3d cluster matched to owned EC2 worker instances: ' + cluster
     for c in containers:
@@ -145,8 +147,9 @@ def make_plan(data, emulator_name, facts, extra_ids=(), extra_networks=(), extra
         prefix = (name_of(emulator) + '-lambda-' + (fn or '').lower() + '-').replace('_', '-')
         if fn in facts['functions'] and name_of(c).startswith(prefix):
             selected[c['Id']] = 'Owned Lambda function and selected emulator runtime name: ' + fn
-        # EC2 names vary by provider. Only accept this exact parent+instance shape.
-        if any(name_of(c) == name_of(emulator) + '-ec2-' + iid for iid in facts['instances']):
+        # Single-emulator engine; both provider names require an owned EC2 instance.
+        if any(name_of(c) in (name_of(emulator) + '-ec2-' + iid, 'localstack-ec2.' + iid)
+               for iid in facts['instances']):
             selected[c['Id']] = 'Selected emulator and owned EC2 instance ID'
     observed = {c['Id'] for c in containers}
     for cid in extra_ids:
@@ -172,6 +175,7 @@ def make_plan(data, emulator_name, facts, extra_ids=(), extra_networks=(), extra
         if network['Name'] in BUILTIN_NETWORKS: continue
         members = set((network.get('Containers') or {}).keys())
         owned = (network['Id'] in extra_networks or network['Name'] in {'k3d-' + c for c in owned_clusters} or
+                 (network['Name'] == 'localstack-ec2-link-local' and bool(members & set(selected))) or
                  (network.get('Labels') or {}).get('lab.launcher') == 'localstack/lab-v1')
         if not owned:
             if members & set(selected):
@@ -276,6 +280,7 @@ def apply_plan(plan, mode, delete_data=False, remove_images=False):
         # Stopping a parent can auto-remove a helper. Never act on stale Docker IDs.
         current = check_plan(plan, inventory())
         if item['id'] in current and current[item['id']]['State']['Running']:
+            print('Stopping ' + item['name'], flush=True)
             run(DOCKER + ['stop', '--time', '120', item['id']])
     after_stop = inventory(); check_plan(plan, after_stop)
     remaining = {c['Id']: c for c in after_stop['containers']}
@@ -285,6 +290,7 @@ def apply_plan(plan, mode, delete_data=False, remove_images=False):
         for item in ordered:
             current = check_plan(plan, inventory())
             if item['id'] in current:
+                print('Removing ' + item['name'], flush=True)
                 run(DOCKER + ['container', 'rm', item['id']])  # No -f/-v; volumes explicit below.
         for kind, verb in (('networks', 'network'), ('volumes', 'volume')):
             now = inventory(); check_plan(plan, now)
@@ -332,9 +338,11 @@ def files_ready(plan, data):
                     raise ValueError('Remaining container uses generated files: ' + name_of(c))
 
 
-def clean_files(apply=False):
+def clean_files(apply=False, roots=FILE_ROOTS):
     """Only generated paths in this checkout. Never follow a symlink or remove Git sources."""
-    paths = [ROOT / name for name in FILE_ROOTS]
+    if not set(roots).issubset(FILE_ROOTS):
+        raise ValueError('Only generated runtime directories may be removed')
+    paths = [ROOT / name for name in roots]
     for parent, dirs, _ in os.walk(ROOT, followlinks=False):
         if '__pycache__' in dirs: paths.append(Path(parent) / '__pycache__')
         dirs[:] = [d for d in dirs if d not in (*FILE_ROOTS, '__pycache__', '.git')]

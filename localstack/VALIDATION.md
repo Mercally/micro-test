@@ -1,4 +1,4 @@
-# Validación: separar evidencia histórica de arranque nuevo
+# Validación del laboratorio
 
 ## Flujo existente en laptop — probado el 2026-11-05
 
@@ -13,20 +13,29 @@ gateway de APIs, como puerto NLB. Arranque nuevo descubre listener; no fija 4512
 Aspire observó compras históricas; visor usa historial SFN reconstruido, no spans
 nativos de aceptación, SQL ni S3.
 
-## Arranque consolidado desde cero
+## Arranque consolidado desde cero — 2026-11-10
 
-**Preparado; aceptación completa PENDIENTE en WSL limpio.** No se reinició ni
-redeplegó laboratorio existente para validar esta reorganización.
+**Primer arranque completo PASS en Ubuntu/WSL2 por SSH.** Se purgó el lab roto
+con autorización de pérdida de datos. Primer intento detectó dependencia del
+credential helper Windows; corregida con configuración Docker temporal aislada.
+Reintento completó las 11 etapas y 9 comprobaciones de negocio. Segundo ciclo
+`down --delete-data` / `up` en validación.
+
+Causa observada del lab roto: Lambda conservaba `172.17.0.2` mientras emulador
+había cambiado a `172.17.0.3`, y NLB apuntaba a IP obsoleta de nodo. EKS mostraba
+FAILED aunque CloudFormation conservaba CREATE_COMPLETE. El ciclo descartable
+elimina estado y descubre endpoints nuevamente; no certifica recuperación al
+reiniciar Docker Desktop conservando datos.
 
 | Comprobación | Estado |
 |---|---|
 | Contratos, descubrimiento/ownership, límites HPA y proyección de trazas | Pruebas offline; ejecutar `./localstack/lab verify` |
 | Rechazo de emulador ajeno, etapas obligatorias, fallo Karpenter, no exposición de token | Cubierto por tests de bootstrap |
 | Plantillas locales y ASL HTTP directo | Validación estática; no equivale a CFN CREATE_COMPLETE |
-| Cleanup Docker, helpers y volúmenes en WSL | Usuario confirmó limpieza tras corregir huella; recibo final no revisado |
-| Primera instalación íntegra en WSL limpio | PENDIENTE |
-| HPA con muestras reales de CPU/RAM en instalación nueva | Etapa hpa superada según salida WSL; reporte detallado de métricas no revisado |
-| Karpenter → NodeClaim → worker real → HTTP | PENDIENTE; obligatorio en `up` |
+| Cleanup Docker, helpers y volúmenes en WSL | PASS: 9 contenedores, 2 redes, 22 volúmenes; PostgreSQL ajenos conservados |
+| Primera instalación íntegra en WSL limpio | PASS tras corrección de credenciales Docker para SSH |
+| HPA con muestras reales de CPU/RAM en instalación nueva | PASS: CPU 7061155n, RAM 252908Ki; objetivo memoria 512Mi |
+| Karpenter → NodeClaim → worker real → HTTP | PASS: worker i-bfc926e0b11952f39 sirvió HTTP |
 | Escalado/reducción HPA y consolidación de nodos | PENDIENTE, ejercicios separados |
 | Persistencia nueva | Configurada con volumen y PERSISTENCE=1; recuperación tras reinicio PENDIENTE |
 | Enforcement IAM / conectividad privada AWS / TLS de entrada | NO CERTIFICADOS por lab |
@@ -57,7 +66,7 @@ terminó, sin aportar recibo final para revisión independiente.
 Tests PostgreSQL requieren instancia/base aisladas; si faltan, se muestran como
 omitidos. No usar DB de compras para habilitarlos: limpian tablas de su base de test.
 
-## Primer arranque WSL: avance y bloqueo observado
+## Historial del primer arranque WSL — bloqueos anteriores
 
 Salida aportada por usuario: etapa `emulator` pasó; stacks network, eks, registry,
 database y storage alcanzaron CREATE_COMPLETE. Después falló comprobación local
@@ -81,7 +90,7 @@ prueba anterior descartaba errores remotos. Verificación posterior: **104 PASS,
 3 omitidas**, lint sin errores. [Evidencia](evidence/karpenter-egress-20261105.json).
 Instalación Karpenter, worker real y compra/PDF nueva todavía no certificados.
 
-## Evidencia que falta recoger
+## Ejercicios adicionales
 
 En motor Docker aislado o limpiado deliberadamente según [CLEANUP.md](CLEANUP.md), ejecutar `./localstack/lab up`; conservar `bootstrap.json`,
 `node-test.json` y `purchase-test.json` generados en `localstack/reports/laptop/`.

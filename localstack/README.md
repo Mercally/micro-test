@@ -3,6 +3,52 @@
 **Entrada:** `./localstack/lab`. Destino: Windows/WSL2 x86_64 con Docker Linux.
 AWS real queda fuera de estos comandos. Diseño siguiente: [AWS](../aws/README.md).
 
+## Ciclo de laboratorio descartable
+
+Ejecutar dentro de Ubuntu/WSL, desde el checkout Linux (`~/source/micro-test`):
+
+```bash
+./localstack/lab down --delete-data
+./localstack/lab up
+```
+
+Para clientes de la laptop remota ya accesible por Tailscale, usa
+`./localstack/lab up --client-endpoint http://100.100.154.68:4566`; genera URLs
+API/PDF para ese destino. Esta opción no publica puertos ni configura Tailscale.
+
+`down` pausa admisión, espera workflows, inventaría recursos propios y elimina
+contenedores, redes y volúmenes del lab, incluyendo workers y helpers. Borra
+`.state` para no reutilizar IPs, kubeconfig ni recibos de infraestructura vieja.
+Conserva código, venv, reportes, imágenes compartidas y recursos de otros proyectos.
+El plan/recibo queda en `~/.local/state/micro-test/cleanup*.json`; repetir `down`
+puede completar una limpieza interrumpida. Helpers sin propiedad demostrada
+detienen la operación para revisión mediante `cleanup`.
+
+**Este ciclo pierde todas las compras, SQL y PDFs.** `up` reconstruye y descubre
+IPs/puertos actuales; éxito exige nodo Karpenter real y pruebas de compra/PDF.
+No equivale a reiniciar Docker Desktop y recuperar el estado persistido. Para
+pausar únicamente procesamiento usa `pause`/`resume`.
+
+`up` acepta `LOCALSTACK_AUTH_TOKEN` o lee `~/.config/micro-test/localstack-token`,
+archivo privado del usuario con permisos `600`, fuera del repo. Para guardarlo
+por primera vez, introduce token mediante `read -rsp` como se muestra abajo;
+después, en otro bloque:
+
+```bash
+mkdir -p "$HOME/.config/micro-test"
+chmod 700 "$HOME/.config/micro-test"
+(umask 077; printf '%s' "$LOCALSTACK_AUTH_TOKEN" > "$HOME/.config/micro-test/localstack-token")
+chmod 600 "$HOME/.config/micro-test/localstack-token"
+unset LOCALSTACK_AUTH_TOKEN
+./localstack/lab up
+```
+
+No guardes token en Git ni lo pegues en argumentos de comandos.
+`up` usa configuración Docker temporal para imágenes públicas, sin depender del
+credential helper interactivo de Windows. ECR usa login local temporal separado;
+las credenciales Docker del usuario permanecen intactas. Esto permite ejecutar
+el mismo lanzador por SSH mediante `wsl -d Ubuntu`.
+
 Ruta local: API Gateway/JWT → NLB TCP → Istio → micro/PostgreSQL-outbox;
 publisher → SQS → Pipe → Step Functions HTTP → mismo NLB → Istio → micro → PDF/S3.
 Istio aplica mTLS y autorización entre gateway y micro. HPA usa CPU **y RAM**.
@@ -10,23 +56,18 @@ Karpenter AWS provisiona workers Docker reales en EKS local, con pool de prácti
 separado. No usa KWOK ni clúster alternativo. Micro permanece en nodos `general`;
 llevarlo al pool dinámico requiere resolver distribución de imagen y placement.
 
-## Laboratorio existente y reconstrucción
+## Instalaciones anteriores y reconstrucción
 
-Laboratorio de laptop ya funciona. **No ejecutes `up` para migrarlo ni reinicies su
-emulador:** persistencia anterior está deshabilitada. Nuevo `up` se niega a adoptar
-`localstack-aws` o cualquier contenedor ajeno en 4566. Tampoco borra stacks/volúmenes.
-Usa `status`, `http`, `test`, `pause` y `resume` para operar lab existente.
+El lanzador no adopta `localstack-aws` ni otro emulador ajeno en 4566. Para migrar
+una instalación anterior, usa la [guía de cleanup](CLEANUP.md) y revisa el inventario.
+Instalaciones antiguas sin persistencia pueden perder estado incluso al detenerse.
+Para conservarlas mientras pruebas un arranque nuevo necesitas otro motor Docker;
+otra distribución WSL que comparte Docker Desktop no es un motor aislado.
 
-Para validar arranque desde cero conservando ese lab necesitas **otro motor Docker
-aislado**, por ejemplo otra máquina/VM de pruebas. Otra distribución WSL que comparte
-Docker Desktop NO es otro motor. No se lanza segundo emulador sobre mismo puerto,
-ni se detiene el primero automáticamente.
-
-Si decides descartar el lab actual y reconstruir en el mismo motor, usa la
-[guía de cleanup](CLEANUP.md): inventario revisable, parada, borrado explícito de
-datos y limpieza de archivos generados. Con persistencia anterior deshabilitada,
-incluso detenerlo puede perder estado. No ejecutes borrado sin revisar el plan.
-La nueva configuración usa los mismos nombres de recursos dentro de emulador nuevo.
+La laptop de pruebas se reconstruye con el emulador administrado
+`micro-test-local-emulator`. Para este usa el ciclo `down --delete-data` / `up`
+anterior. Reiniciar el emulador o Docker Desktop por separado puede dejar IPs
+guardadas obsoletas; la recuperación con datos conservados no está certificada.
 
 ## Primera corrida en entorno limpio
 

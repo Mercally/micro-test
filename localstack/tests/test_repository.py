@@ -21,7 +21,7 @@ class RepositoryTests(unittest.TestCase):
 
     def test_aws_contains_design_only(self):
         files = [p.relative_to(REPO / 'aws').as_posix() for p in (REPO / 'aws').rglob('*') if p.is_file() and p.name != '.DS_Store' and '__pycache__' not in p.parts]
-        self.assertEqual(set(files), {'README.md', 'ARCHITECTURE.md'})
+        self.assertEqual(set(files), {'README.md', 'ARCHITECTURE.md', 'CLOUDFORMATION.md', 'PLAN_AWS.md'})
         self.assertFalse((REPO / 'docker-compose.yml').exists())
         self.assertFalse((REPO / 'statemachine/docs-orchestrator.asl.json').exists())
 
