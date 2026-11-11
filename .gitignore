@@ -1,4 +1,7 @@
 /target/
+frontend/.angular/
+frontend/node_modules/
+frontend/dist/
 !.mvn/wrapper/maven-wrapper.jar
 
 ### STS ###

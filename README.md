@@ -6,6 +6,7 @@ mTLS, PostgreSQL, Lambda publisher, SQS, Pipes, Step Functions, HPA y Karpenter.
 
 - **[LocalStack: arranque, operación y pruebas](localstack/README.md)** — entrada única local.
 - **[AWS/CloudFormation: siguiente etapa](aws/README.md)** — diseño; generación y despliegue pendientes.
+- **[Frontend Angular de ventas](frontend/README.md)** — interfaz local para crear ventas y consultar su estado.
 
 ```text
 Cliente → API Gateway/JWT → NLB → Istio → aceptación + outbox PostgreSQL

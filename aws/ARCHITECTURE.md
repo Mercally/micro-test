@@ -19,7 +19,10 @@ No se afirma que esta propuesta sea el mínimo costo absoluto sin esas cifras.
 
 ```mermaid
 flowchart TD
-  Client[Cliente] --> API[API Gateway: autenticación y rutas públicas]
+  Client[Browser] --> CF[CloudFront]
+  CF --> Frontend[(S3 privado: Angular SPA)]
+  Client --> API[API Gateway: JWT y rutas públicas]
+  API --> Auth[Lambda authorizer]
   API --> Link[VPC Link]
   Link --> NLB[NLB interno compartido]
   NLB --> GW[Pods Istio Gateway: TLS y rutas]
@@ -36,7 +39,46 @@ flowchart TD
   GW --> Policy[Servicio pólizas]
   Doc --> S3[(S3: PDF)]
   K[Karpenter] -. capacidad de nodos .-> EKS[EKS: pods en nodos privados]
+  API --> CW[CloudWatch]
+  Auth --> CW
+  Pub --> CW
+  Accept --> CW
+  Doc --> CW
+  Policy --> CW
 ```
+
+### Frontend, autorización y observabilidad
+
+El frontend Angular local se publica como objetos estáticos en el bucket S3
+`micro-test-local-frontend`. En LocalStack se abre el objeto mediante la URL
+path-style del gateway local para mantener el mismo origen que API Gateway. El
+stack de negocio conecta `purchase-jwt` con la Lambda authorizer, exige ese
+authorizer en las rutas de alta y consulta, y reenvía el JWT junto con el sujeto
+verificado. El despliegue de frontend valida este contrato. La lectura pública
+del bucket solo aplica al emulador local en loopback.
+
+En AWS, publicar la SPA mediante CloudFront con origen S3 privado/OAC. El browser
+llama por separado al API Gateway; configurar CORS limitado a los dominios
+CloudFront elegidos. La Lambda valida el JWT y API Gateway transmite al backend
+la identidad que validó. El secreto permanece en Secrets Manager/Lambda, nunca
+en Angular. El modo de autorización debe revisarse con el proveedor de identidad
+antes de implementar el despliegue AWS.
+
+El futuro panel/stack de CloudWatch debe incluir, como mínimo:
+
+- Logs de acceso de API Gateway y métricas de latencia, 4XX, 5XX y throttling.
+- Logs y métricas de Lambda authorizer y publisher; prohibido incluir tokens,
+  secretos, datos personales o contenido de solicitudes en claro.
+- Logs/métricas de contenedores EKS correlacionables por `saleId`, `eventId` y
+  `executionArn`, más métricas de SQS, Pipe y Step Functions.
+- Métricas de requests/errores de CloudFront y S3, retención definida y alarmas
+  para 5XX, errores del authorizer, DLQ y edad de mensajes.
+
+Los grupos de authorizer y publisher ya están declarados en la plantilla del
+laboratorio; no equivalen a un stack de CloudWatch AWS. Aspire local reconstruye
+parte del historial Step Functions y no sustituye logs nativos, métricas ni trazas
+de CloudWatch. Retención, access logging, dashboards y alarmas AWS siguen
+pendientes de implementación.
 
 Todos los servicios pueden empezar como despliegues del código actual; separarlos
 por dominio no exige introducir bases independientes en el primer laboratorio.

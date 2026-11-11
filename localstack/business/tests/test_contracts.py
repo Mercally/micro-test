@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lambda"))
 from authorizer import verify
@@ -29,6 +30,25 @@ class ContractsTest(unittest.TestCase):
         for value in ("https://sqs.us-east-1.amazonaws.com", "http://100.95.224.37:4566", "http://169.254.169.254:4566", "http://user@127.0.0.1:4566", "http://127.0.0.1:4566/evil"):
             with self.assertRaises(ValueError): local_url(value, 4566)
         self.assertEqual(local_url("http://172.18.0.2:4566", 4566), "http://172.18.0.2:4566")
+
+    def test_api_gateway_forwards_validated_identity_to_micro(self):
+        template_path = Path(__file__).parents[1] / "templates/business.yaml"
+        template = yaml.safe_load(template_path.read_text())
+        resources = template["Resources"]
+        authorizer = resources["Authorizer"]["Properties"]
+        self.assertEqual(authorizer["Type"], "TOKEN")
+        self.assertEqual(authorizer["IdentitySource"], "method.request.header.Authorization")
+        for method_name in ("AcceptMethod", "StatusMethod", "RetryMethod"):
+            method = resources[method_name]["Properties"]
+            self.assertEqual(method["AuthorizationType"], "CUSTOM")
+            self.assertEqual(method["AuthorizerId"], {"Ref": "Authorizer"})
+            integration = method["Integration"]
+            self.assertEqual(
+                integration["RequestParameters"]["integration.request.header.Authorization"],
+                "method.request.header.Authorization")
+            self.assertEqual(
+                integration["RequestParameters"]["integration.request.header.X-Authenticated-User"],
+                "context.authorizer.subject")
 
 
 if __name__ == "__main__": unittest.main()

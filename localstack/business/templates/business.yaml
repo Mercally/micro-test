@@ -332,11 +332,16 @@ Resources:
       AuthorizationType: CUSTOM
       AuthorizerId:
         Ref: Authorizer
+      RequestParameters:
+        method.request.header.Authorization: false
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: POST
         Uri:
           Fn::Sub: ${NlbBaseUrl}/api/v1/purchases
+        RequestParameters:
+          integration.request.header.Authorization: method.request.header.Authorization
+          integration.request.header.X-Authenticated-User: context.authorizer.subject
   StatusMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -350,6 +355,7 @@ Resources:
         Ref: Authorizer
       RequestParameters:
         method.request.path.saleId: true
+        method.request.header.Authorization: false
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: GET
@@ -357,6 +363,8 @@ Resources:
           Fn::Sub: ${NlbBaseUrl}/api/v1/purchases/{saleId}
         RequestParameters:
           integration.request.path.saleId: method.request.path.saleId
+          integration.request.header.Authorization: method.request.header.Authorization
+          integration.request.header.X-Authenticated-User: context.authorizer.subject
   RetryMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -370,6 +378,7 @@ Resources:
         Ref: Authorizer
       RequestParameters:
         method.request.path.saleId: true
+        method.request.header.Authorization: false
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: POST
@@ -377,6 +386,8 @@ Resources:
           Fn::Sub: ${NlbBaseUrl}/api/v1/purchases/{saleId}/retry
         RequestParameters:
           integration.request.path.saleId: method.request.path.saleId
+          integration.request.header.Authorization: method.request.header.Authorization
+          integration.request.header.X-Authenticated-User: context.authorizer.subject
   Deployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:

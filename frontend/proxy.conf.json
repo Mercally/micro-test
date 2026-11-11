@@ -1,0 +1,10 @@
+{
+  "/gateway/**": {
+    "changeOrigin": true,
+    "pathRewrite": {
+      "^/gateway": ""
+    },
+    "secure": false,
+    "target": "http://127.0.0.1:4566"
+  }
+}

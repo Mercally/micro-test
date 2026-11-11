@@ -164,6 +164,24 @@ ExecutionArn. Bloques Transient/Permanent/Retry permiten practicar recuperación
 - [Ejercicios de negocio y logs](business/PRACTICE.md).
 - [HPA, Karpenter, cola y carga](scaling/README.md).
 - [Aspire: seguimiento gráfico por saleId](observability/README.md).
+- [Frontend Angular de ventas](../frontend/README.md).
+
+### Publicar el frontend local
+
+Con el API y el authorizer desplegados por `lab up`, instala Node.js 20.19+ o
+22.12+ y npm en WSL. Desde la raíz:
+
+```bash
+npm --prefix frontend ci
+./localstack/lab frontend
+./localstack/lab frontend-status
+```
+
+La app queda en S3 local; abre el `frontendUrl` que imprime el comando. El mismo
+bucket/objeto se conserva en despliegues repetidos y los assets nuevos se cargan
+sin borrar archivos existentes. Para los detalles del origen local, JWT y diseño
+futuro AWS/CloudWatch, consulta [frontend](../frontend/README.md) y
+[arquitectura AWS](../aws/ARCHITECTURE.md).
 
 `up` no instala Aspire CLI ni arranca visor: observabilidad es cliente opcional,
 no dependencia del flujo. Visor actual en Mac: <http://127.0.0.1:18888/traces>.

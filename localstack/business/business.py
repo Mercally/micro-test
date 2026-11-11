@@ -508,7 +508,7 @@ def main():
         if args.command == "status":
             result["persistence"] = lab.health.get("features")
             result["stacks"] = {suffix: (lab.stack(PREFIX + suffix) or {}).get("StackStatus", "ABSENT")
-                                for suffix in ("network", "eks", "registry", "database", "storage", "scaling-network", "business-artifacts", "business", "business-scheduler")}
+                                for suffix in ("network", "eks", "registry", "database", "storage", "scaling-network", "business-artifacts", "business", "business-scheduler", "frontend")}
             if lab.stack(PREFIX + "business"):
                 result["outputs"] = outputs(lab)
                 result["pipe"] = pipe(lab)

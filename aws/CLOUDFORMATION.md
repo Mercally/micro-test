@@ -9,7 +9,7 @@ Sí: podemos validar YAML y esquemas CloudFormation sin crear infraestructura.
 No existe un dry-run que ejecute toda la arquitectura y garantice su funcionamiento
 sin aprovisionarla.
 
-**Este checkout todavía no tiene plantillas AWS reales bajo `aws/`.** Los nueve
+**Este checkout todavía no tiene plantillas AWS reales bajo `aws/`.** Las diez
 CloudFormation existentes son del laboratorio LocalStack. No deben desplegarse
 en AWS: incluyen nombres locales, credenciales de prueba, endpoints HTTP y
 dependencias creadas por scripts. No basta con cambiar perfil y región.
@@ -57,11 +57,16 @@ PYTHONPATH=localstack/scripts:localstack/business \
 localstack/.venv/bin/cfn-lint \
   --non-zero-exit-code error \
   --template localstack/scaling/network.yaml
+
+localstack/.venv/bin/cfn-lint \
+  --non-zero-exit-code error \
+  --template localstack/frontend/templates/frontend.yaml
 ```
 
 Se reutilizan los validadores del repositorio. El primero comprueba las cinco
 plantillas base y el orden de sus exports/imports. El de negocio renderiza y valida
-tres plantillas. El último valida NLB/probe. No ejecutar `lab up` para hacer lint.
+tres plantillas. Los dos últimos comandos validan NLB/probe y el bucket del
+frontend. No ejecutar `lab up` para hacer lint.
 
 Los validadores regeneran exclusivamente sus archivos de salida en
 `localstack/.state/rendered/` y los JSON `artifacts`, `business` y
@@ -76,8 +81,10 @@ a CloudFormation. Esta validación no ejecuta el workflow.
 
 ### Resultado de esta revisión
 
-Con `cfn-lint 1.59.0`: **9 plantillas sin errores**, orden de exports/imports de
-las cinco bases aprobado. Se observaron diez warnings en las bases:
+Resultado histórico del 2026-11-05, antes de añadir la plantilla S3 del frontend:
+con `cfn-lint 1.59.0`, **9 plantillas sin errores**, orden de exports/imports de
+las cinco bases aprobado. La nueva décima plantilla necesita ejecutar los comandos
+anteriores en el checkout actualizado. Se observaron diez warnings en las bases:
 
 - Ocho `W3010`: AZ `us-east-1a` / `us-east-1b` fijas.
 - Un `W2501`: contraseña de laboratorio escrita en la plantilla RDS.
@@ -104,9 +111,10 @@ El bootstrap incluye pasos entre estas plantillas que no son CloudFormation.
 | 7 | `localstack/business/templates/artifacts.yaml` | Antes de subir ZIP Lambda |
 | 8 | `localstack/business/templates/business.yaml` (renderizado) | DB, ZIP publicado, NLB, Connection y servicios listos |
 | 9 | `localstack/business/templates/publisher-scheduler.yaml` | Lambda publisher de negocio; schedule inicialmente deshabilitado |
+| 10 | `localstack/frontend/templates/frontend.yaml` | Bucket público de lectura solo en LocalStack; Angular se publica con `lab frontend` |
 
 El Pipe de negocio y otras operaciones del laboratorio se gestionan desde scripts;
-aplicar solo estos nueve archivos no reproduce el sistema completo.
+aplicar solo estas diez plantillas no reproduce el sistema completo.
 
 ## 3. Orden previsto para la futura implementación AWS
 
@@ -120,12 +128,14 @@ No reutilizar plantillas retiradas del historial.
 | 1 | Red: VPC, exactamente dos AZ, subredes, rutas, SG y egreso/endpoints | CIDR y estrategia de egreso definidos |
 | 2 | Registro ECR y bucket de artefactos | Cuenta/región y nombres definidos; después publicar imágenes/ZIP versionados |
 | 3 | EKS, acceso administrativo, IAM y capacidad base On-Demand | Red; acceso al API privado desde equipo/runner autorizado |
-| 4 | RDS privado, secretos y S3 de documentos | Red; perfil RDS, retención y backups definidos |
+| 4 | RDS privado, secretos y S3 privado de documentos | Red; perfil RDS, retención y backups definidos |
 | 5 | NLB interno, listener/target group, Resource Gateway/Configuration y Connection privada | Red, dominio/TLS e identidad del workflow definidos |
 | 6 | SQS/DLQ, Step Functions, Pipe, publisher y Scheduler | DB, acceso privado y artefactos existentes; Pipe STOPPED y Scheduler DISABLED |
 | 7 | Bootstrap Kubernetes y migraciones | EKS, imágenes y Outputs previos; instalar controladores/Istio, TLS, TargetGroupBinding, servicios, políticas, HPA y Karpenter |
-| 8 | API Gateway autenticado y VPC Link | NLB y servicios saludables; identidad de usuario configurada |
-| 9 | Pruebas y activación controlada | Probar rutas, TLS, autorización y datos; habilitar triggers y probar compra → 202 → COMPLETED → PDF |
+| 8 | API Gateway autenticado, Lambda authorizer y VPC Link | NLB y servicios saludables; identidad de usuario configurada |
+| 9 | CloudFront + S3 privado/OAC para Angular | API disponible; CORS restringido al origen CloudFront; assets versionados |
+| 10 | CloudWatch: API/Lambda/EKS/SQS/Pipe/Step Functions, retención y alarmas | Definir formato redactado, retención, umbrales y correlación; validar sin PII/tokens |
+| 11 | Pruebas y activación controlada | Probar rutas, TLS, autorización y datos; habilitar triggers y probar compra → 202 → COMPLETED → PDF |
 
 El paso 7 es **externo a CloudFormation**: Helm, kubectl, certificados y migraciones
 necesitan instrucciones y artefactos propios. Publicar imágenes/ZIP también es

@@ -1,0 +1,62 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "newProjectRoot": "projects",
+  "projects": {
+    "sales-ui": {
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "configurations": {
+            "production": {
+              "budgets": [
+                {
+                  "maximumError": "1mb",
+                  "maximumWarning": "500kb",
+                  "type": "initial"
+                }
+              ],
+              "outputHashing": "all"
+            },
+            "development": {
+              "optimization": false,
+              "sourceMap": true
+            }
+          },
+          "defaultConfiguration": "production",
+          "options": {
+            "browser": "src/main.ts",
+            "index": "src/index.html",
+            "polyfills": [
+              "zone.js"
+            ],
+            "styles": [
+              "src/styles.css"
+            ],
+            "tsConfig": "tsconfig.app.json"
+          }
+        },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "configurations": {
+            "development": {
+              "buildTarget": "sales-ui:build:development"
+            },
+            "production": {
+              "buildTarget": "sales-ui:build:production"
+            }
+          },
+          "defaultConfiguration": "development",
+          "options": {
+            "host": "127.0.0.1",
+            "port": 4200,
+            "proxyConfig": "proxy.conf.json"
+          }
+        }
+      },
+      "projectType": "application",
+      "root": "",
+      "sourceRoot": "src"
+    }
+  },
+  "version": 1
+}

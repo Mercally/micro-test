@@ -308,12 +308,14 @@ def exclusive_bootstrap():
 
 
 def verify():
-    for directory in ('scripts', 'business/tests', 'scaling', 'observability', 'tests'):
+    for directory in ('scripts', 'business/tests', 'frontend/tests', 'scaling', 'observability', 'tests'):
         subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(ROOT / directory), '-p', 'test_*.py'], check=True)
     from lab import validate
     from business import validate as validate_business
     validate(); validate_business()
     subprocess.run([str(Path(sys.executable).with_name('cfn-lint')), str(ROOT / 'scaling/network.yaml')], check=True)
+    subprocess.run([str(Path(sys.executable).with_name('cfn-lint')),
+                    str(ROOT / 'frontend/templates/frontend.yaml')], check=True)
     print('PASS: offline verification; fresh WSL runtime is a separate acceptance gate')
 
 
@@ -323,7 +325,8 @@ def main():
         with exclusive_bootstrap(): cleanup.main(sys.argv[2:])
         return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['up', 'down', 'status', 'http', 'test', 'pause', 'resume', 'verify'])
+    parser.add_argument('command', choices=['up', 'down', 'status', 'http', 'test', 'pause', 'resume',
+                                            'verify', 'frontend', 'frontend-status'])
     parser.add_argument('--endpoint', type=endpoint, default=ENDPOINT)
     parser.add_argument('--client-endpoint', type=endpoint, default=ENDPOINT)
     parser.add_argument('--delete-data', action='store_true', help='Required for down: discard all lab data')
@@ -337,6 +340,11 @@ def main():
         parser.error('--delete-data is only valid with down')
     if args.command == 'verify':
         verify(); return
+    if args.command in ('frontend', 'frontend-status'):
+        frontend_command = 'deploy' if args.command == 'frontend' else 'status'
+        subprocess.run([sys.executable, str(ROOT / 'frontend/frontend.py'), frontend_command,
+                        '--endpoint', args.endpoint], check=True)
+        return
     if args.command == 'up':
         if args.endpoint != ENDPOINT:
             parser.error('up requires WSL loopback; remote bootstrap is forbidden')

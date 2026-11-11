@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LocalStack-only static Angular frontend for the micro-test purchase lab.
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: micro-test-local-frontend
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+      - Key: Lab
+        Value: micro-test-local
+  FrontendReadPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: PublicReadForLocalStaticFiles
+          Effect: Allow
+          Principal: '*'
+          Action:
+          - s3:GetObject
+          Resource:
+            Fn::Sub: ${FrontendBucket.Arn}/*
+Outputs:
+  BucketName:
+    Value:
+      Ref: FrontendBucket
+  FrontendUrl:
+    Value:
+      Fn::Sub: http://127.0.0.1:4566/${FrontendBucket}/index.html
