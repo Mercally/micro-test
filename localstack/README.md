@@ -148,6 +148,14 @@ Desde raíz, WSL:
 ./localstack/lab resume     # salud primero; reanudar cola puede provocar ráfaga
 ```
 
+`status` comprueba estado real de EKS/node groups, RDS, conexión del publisher
+con PostgreSQL y una consulta autenticada de venta inexistente por API/NLB.
+Devuelve `FAIL` cuando esas dependencias fallan, aunque CloudFormation diga
+`CREATE_COMPLETE`. `readyForTesting: true` exige además Pipe y Scheduler activos.
+Un lab sano pausado informa `admission: PAUSED` y `readyForTesting: false`.
+La consulta de estado no crea compras ni sustituye prueba `test` de compra/PDF
+o comprobación del worker Karpenter dentro de WSL.
+
 En Mac, para **lab existente**:
 
 ```bash

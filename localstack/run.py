@@ -2,6 +2,7 @@
 """Canonical LocalStack lab entry point; bootstrap owns only its own new emulator."""
 import argparse
 import contextlib
+import errno
 import fcntl
 import json
 import os
@@ -73,6 +74,20 @@ def require_wsl():
     run(DOCKER + ['compose', 'version'])
 
 
+def wait_gateway_port():
+    # Docker Desktop can release the host binding shortly after container removal.
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            with socket.socket() as check:
+                check.bind(('127.0.0.1', 4566))
+            return
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE or time.monotonic() >= deadline:
+                raise
+            time.sleep(1)
+
+
 def ensure_emulator():
     current = owned_emulator(docker_containers())
     if current:
@@ -80,8 +95,7 @@ def ensure_emulator():
             run(DOCKER + ['start', current['Id']])
     else:
         # Docker can be free while another host process holds the port.
-        with socket.socket() as check:
-            check.bind(('127.0.0.1', 4566))
+        wait_gateway_port()
         if not os.environ.get('LOCALSTACK_AUTH_TOKEN'):
             token_file = Path.home() / '.config/micro-test/localstack-token'
             if token_file.is_file() and not token_file.is_symlink():

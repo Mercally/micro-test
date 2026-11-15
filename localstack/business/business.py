@@ -487,6 +487,35 @@ def test_pause_resume(lab):
             "pdf": pdf_proof(lab, completed), "executions": wait_executions(lab, accepted["eventId"])}
 
 
+def runtime_health(lab):
+    """Read live dependencies; persisted CloudFormation status is not readiness."""
+    eks = lab.client("eks")
+    name = lab.outputs("eks")["ClusterName"]
+    cluster = eks.describe_cluster(name=name)["cluster"]
+    if cluster["status"] != "ACTIVE":
+        raise RuntimeError("EKS runtime is " + cluster["status"] + "; persisted stacks do not prove readiness")
+    groups = eks.list_nodegroups(clusterName=name)["nodegroups"]
+    expected = {PREFIX + role for role in ("general", "onprem", "terceros")}
+    if not expected.issubset(groups):
+        raise RuntimeError("Required EKS node groups are missing")
+    states = {group: eks.describe_nodegroup(clusterName=name, nodegroupName=group)["nodegroup"]["status"]
+              for group in sorted(expected)}
+    if any(state != "ACTIVE" for state in states.values()):
+        raise RuntimeError("EKS node groups are not ACTIVE: " + json.dumps(states))
+    database = lab.client("rds").describe_db_instances(DBInstanceIdentifier=PREFIX + "database")["DBInstances"][0]
+    if database["DBInstanceStatus"] != "available":
+        raise RuntimeError("RDS runtime is " + database["DBInstanceStatus"])
+    if not invoke(lab, "publisher", {"health": True}).get("schemaReady"):
+        raise RuntimeError("Publisher cannot confirm PostgreSQL outbox schema")
+    # A random absent sale exercises JWT, NLB, application and SQL without creating data.
+    code, value = http_request(lab, "/purchases/" + str(uuid.uuid4()), bearer=token(lab))
+    if code != 404 or value.get("error") != "SALE_NOT_FOUND":
+        raise RuntimeError("Authenticated application probe failed: " + json.dumps({"http": code, "body": value}))
+    return {"status": "PASS", "eks": cluster["status"], "nodeGroups": states,
+            "rds": database["DBInstanceStatus"], "publisherSchema": "PASS", "authenticatedApi": "PASS",
+            "scope": "Live API, JWT, NLB and SQL; use test for a new purchase/PDF and WSL node-test for Karpenter"}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["validate", "package", "status", "deploy", "start", "stop", "pause-publisher", "resume-publisher", "publish", "http", "test", "test-pause", "iam", "snapshot", "verify-snapshot"])
@@ -506,6 +535,7 @@ def main():
     result = {"endpoint": lab.endpoint, "localstack": lab.info, "command": args.command, "checks": {}}
     try:
         if args.command == "status":
+            result["readyForTesting"] = False
             result["persistence"] = lab.health.get("features")
             result["stacks"] = {suffix: (lab.stack(PREFIX + suffix) or {}).get("StackStatus", "ABSENT")
                                 for suffix in ("network", "eks", "registry", "database", "storage", "scaling-network", "business-artifacts", "business", "business-scheduler", "frontend")}
@@ -513,6 +543,14 @@ def main():
                 result["outputs"] = outputs(lab)
                 result["pipe"] = pipe(lab)
                 result["publisherSchedule"] = publisher_schedule(lab)
+            required = {key: value for key, value in result["stacks"].items() if key != "frontend"}
+            if any(value not in ("CREATE_COMPLETE", "UPDATE_COMPLETE") for value in required.values()):
+                raise RuntimeError("Required lab stacks are incomplete: " + json.dumps(required))
+            result["checks"]["runtime"] = runtime_health(lab)
+            result["readyForTesting"] = (bool(result.get("pipe"))
+                and result["pipe"]["CurrentState"] == "RUNNING"
+                and result["publisherSchedule"]["State"] == "ENABLED")
+            result["admission"] = "RUNNING" if result["readyForTesting"] else "PAUSED"
         elif args.command == "deploy": deploy(lab, args)
         elif args.command == "start":
             if not invoke(lab, "publisher", {"health": True})["schemaReady"]:

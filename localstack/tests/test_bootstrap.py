@@ -1,6 +1,7 @@
 """Fresh-run safety, required stages and failure behavior; no Docker/AWS calls."""
 import argparse
 import copy
+import errno
 import importlib.util
 import json
 import os
@@ -31,6 +32,23 @@ def emulator():
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_port_release_retry_does_not_ignore_persistent_or_unrelated_errors(self):
+        with patch.object(runner.socket, 'socket') as socket, patch.object(runner.time, 'sleep') as sleep, \
+                patch.object(runner.time, 'monotonic', return_value=0) as clock:
+            bind = socket.return_value.__enter__.return_value.bind
+            bind.side_effect = [OSError(errno.EADDRINUSE, 'busy'), None]
+            runner.wait_gateway_port()
+            self.assertEqual(bind.call_count, 2)
+            sleep.assert_called_once_with(1)
+            bind.side_effect = OSError(errno.EADDRINUSE, 'still busy')
+            clock.side_effect = [0, 31]
+            with self.assertRaises(OSError): runner.wait_gateway_port()
+            clock.side_effect = None
+            bind.side_effect = OSError(errno.EACCES, 'denied')
+            sleep.reset_mock()
+            with self.assertRaises(OSError): runner.wait_gateway_port()
+            sleep.assert_not_called()
+
     def test_up_uses_isolated_docker_credentials_and_restores_environment(self):
         seen = []
         def boot(args):
