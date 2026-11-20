@@ -106,6 +106,64 @@ class ProcessHistoryIntegrationTest {
                 .andExpect(jsonPath("$[0].history[0].memoryMb").value(8));
     }
 
+    /**
+     * Idempotency is direct: only the path that really acts spends the simulated work. Checked per scenario:
+     * first run, global redelivery (ALREADY_DONE), injected fault, lost ack (RECONCILED), out of order.
+     */
+    @Test
+    void simulatedWorkIsSpentOnlyWhenTheStepReallyActs() throws Exception {
+        db.update("UPDATE process.lab_settings SET step_delay_min_ms=300,step_delay_max_ms=300,step_cpu_ms=50,step_memory_mb=4");
+        when(external.findCmDocument(any())).thenReturn(null, "CM-x");  // 1st cm: missing; afterwards: CM already has it
+        when(external.storeCmDocument(any(), any())).thenReturn("CM-x");
+        when(external.sendInsurerPolicy(any())).thenReturn("POL-x");
+
+        UUID saleId = sale("idempotent-work", "insurer:transient:1");
+        step(saleId, "document", 200);   // acts
+        step(saleId, "document", 200);   // redelivery: ALREADY_DONE
+        step(saleId, "cm", 200);         // acts (CM did not have it)
+        step(saleId, "cm", 200);         // ALREADY_DONE
+        step(saleId, "insurer", 503);    // injected fault: fails before acting
+        step(saleId, "insurer", 200);    // acts
+        step(saleId, "insurer", 200);    // ALREADY_DONE
+
+        UUID early = sale("out-of-order", null);
+        step(early, "cm", 409);          // document missing: fails before acting
+
+        var rows = db.queryForList("""
+                SELECT step,outcome,delay_ms,cpu_ms,memory_mb,duration_ms FROM process.history
+                WHERE sale_id IN (?,?) ORDER BY id""", saleId, early);
+        var expected = java.util.List.of(
+                java.util.List.of("document", "DONE", true), java.util.List.of("document", "ALREADY_DONE", false),
+                java.util.List.of("cm", "DONE", true), java.util.List.of("cm", "ALREADY_DONE", false),
+                java.util.List.of("insurer", "ERROR", false), java.util.List.of("insurer", "DONE", true),
+                java.util.List.of("insurer", "ALREADY_DONE", false), java.util.List.of("cm", "ERROR", false));
+        assertEquals(expected.size(), rows.size());
+        for (int i = 0; i < rows.size(); i++) {
+            var row = rows.get(i);
+            boolean worked = (Boolean) expected.get(i).get(2);
+            String at = "attempt " + i + " " + row;
+            assertEquals(expected.get(i).get(0), row.get("step"), at);
+            assertEquals(expected.get(i).get(1), row.get("outcome"), at);
+            assertEquals(worked ? 300 : 0, row.get("delay_ms"), at);
+            assertEquals(worked ? 50 : 0, row.get("cpu_ms"), at);
+            assertEquals(worked ? 4 : 0, row.get("memory_mb"), at);
+            int duration = ((Number) row.get("duration_ms")).intValue();
+            assertTrue(worked ? duration >= 300 : duration < 300, at);
+        }
+    }
+
+    @Test
+    void reconciledStepSpendsNoWork() throws Exception {
+        db.update("UPDATE process.lab_settings SET step_delay_min_ms=300,step_delay_max_ms=300");
+        UUID saleId = sale("reconciled", null);   // setUp: CM already has the document (ack lost earlier)
+        step(saleId, "document", 200);
+        step(saleId, "cm", 200);
+        var cm = db.queryForMap("SELECT outcome,delay_ms,duration_ms FROM process.history WHERE sale_id=? AND step='cm'", saleId);
+        assertEquals("RECONCILED", cm.get("outcome"));
+        assertEquals(0, cm.get("delay_ms"));
+        assertTrue(((Number) cm.get("duration_ms")).intValue() < 300);
+    }
+
     @Test
     void listReturnsLatestSalesWithOutboxAndHistory() throws Exception {
         UUID older = sale("older", null);

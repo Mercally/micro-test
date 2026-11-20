@@ -31,34 +31,33 @@ public class ProcessController {
     /** eventId only selects lab faults; idempotency is per sale and step. */
     public record StepRequest(UUID eventId, String error) {}
 
-    /** Journals every attempt (RUNNING → outcome) and runs the lab's simulated work before business steps. */
+    /** Journals every attempt (RUNNING → outcome). Business steps receive the lab work to spend only if they act. */
     @PostMapping("/{step}")
     public Map<String, Object> run(@PathVariable UUID saleId, @PathVariable String step,
-                                   @RequestBody(required = false) StepRequest body) throws InterruptedException {
+                                   @RequestBody(required = false) StepRequest body) {
         if (!STEPS.contains(step)) throw new PurchaseException(404, "UNKNOWN_STEP", step);
         long started = System.nanoTime();
-        ProcessHistory.Work work = PACED.contains(step) ? history.work() : ProcessHistory.Work.NONE;
+        ProcessHistory.Work work = PACED.contains(step) ? history.work() : ProcessHistory.Work.none();
         long id = history.start(saleId, step, work);
         try {
-            ProcessHistory.simulate(work);
-            Map<String, Object> result = execute(saleId, step, body);
-            history.finish(id, String.valueOf(result.getOrDefault("outcome", result.get("status"))), null, elapsedMs(started));
+            Map<String, Object> result = execute(saleId, step, body, work);
+            history.finish(id, String.valueOf(result.getOrDefault("outcome", result.get("status"))), null, elapsedMs(started), work.wasUsed());
             return result;
         } catch (PurchaseException e) {
-            history.finish(id, "ERROR", e.code() + ": " + e.getMessage(), elapsedMs(started));
+            history.finish(id, "ERROR", e.code() + ": " + e.getMessage(), elapsedMs(started), work.wasUsed());
             throw e;
-        } catch (RuntimeException | InterruptedException e) {
-            history.finish(id, "ERROR", e.getMessage(), elapsedMs(started));
+        } catch (RuntimeException e) {
+            history.finish(id, "ERROR", e.getMessage(), elapsedMs(started), work.wasUsed());
             throw e;
         }
     }
 
-    private Map<String, Object> execute(UUID saleId, String step, StepRequest body) {
+    private Map<String, Object> execute(UUID saleId, String step, StepRequest body, ProcessHistory.Work work) {
         UUID eventId = body == null ? null : body.eventId();
         return switch (step) {
-            case "document" -> process.document(saleId, eventId);
-            case "cm" -> process.cm(saleId, eventId);
-            case "insurer" -> process.insurer(saleId, eventId);
+            case "document" -> process.document(saleId, eventId, work);
+            case "cm" -> process.cm(saleId, eventId, work);
+            case "insurer" -> process.insurer(saleId, eventId, work);
             case "cleanup" -> process.cleanup(saleId);
             default -> process.fail(saleId, body == null ? null : body.error());
         };

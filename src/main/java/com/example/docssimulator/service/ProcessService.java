@@ -42,12 +42,32 @@ public class ProcessService {
 
     /** Step 1: prepare, fill and sign the document (real SHA256withRSA over its content); store it in temporary S3. */
     @Transactional
-    public Map<String, Object> document(UUID saleId, UUID eventId) {
+    public Map<String, Object> document(UUID saleId, UUID eventId) { return document(saleId, eventId, ProcessHistory.Work.none()); }
+
+    @Transactional
+    public Map<String, Object> cm(UUID saleId, UUID eventId) { return cm(saleId, eventId, ProcessHistory.Work.none()); }
+
+    @Transactional
+    public Map<String, Object> insurer(UUID saleId, UUID eventId) { return insurer(saleId, eventId, ProcessHistory.Work.none()); }
+
+    /** Lab work runs only on the path that really acts, inside the step like the real work it stands for. */
+    private static void act(ProcessHistory.Work work) {
+        try {
+            ProcessHistory.simulate(work);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Trabajo simulado interrumpido", e);
+        }
+    }
+
+    @Transactional
+    public Map<String, Object> document(UUID saleId, UUID eventId, ProcessHistory.Work work) {
         lockSale(saleId);
         String key = key(saleId);
         // Done means "file available for step 2" or step 2 already consumed it.
         if (done(saleId, DOCUMENT) && (done(saleId, CM) || storage.exists(key))) return result(saleId, DOCUMENT, "ALREADY_DONE");
         fault(eventId, "document");
+        act(work);
         storage.upload(key, pdf.createPdf(saleId, documentBytes()));
         if (!storage.exists(key)) throw new TransientWorkflowException("document: archivo no verificado en S3");
         record(saleId, DOCUMENT, key, "DONE");
@@ -57,7 +77,7 @@ public class ProcessService {
 
     /** Step 2: upload the document to Content Manager. */
     @Transactional
-    public Map<String, Object> cm(UUID saleId, UUID eventId) {
+    public Map<String, Object> cm(UUID saleId, UUID eventId, ProcessHistory.Work work) {
         lockSale(saleId);
         if (done(saleId, CM)) return result(saleId, CM, "ALREADY_DONE");
         require(saleId, DOCUMENT);
@@ -68,6 +88,7 @@ public class ProcessService {
             String key = key(saleId);
             // Recorded as done but file gone: step 1 must regenerate it on the next delivery.
             if (!storage.exists(key)) throw new PurchaseException(409, "DOCUMENT_MISSING", "Archivo temporal ausente; reintento global");
+            act(work);
             external.storeCmDocument(saleId, storage.download(key));
             documentId = external.findCmDocument(saleId);
             if (documentId == null) throw new TransientWorkflowException("cm: documento no verificado");
@@ -79,7 +100,7 @@ public class ProcessService {
 
     /** Step 3: issue the policy with the insurer and require its acknowledgement. */
     @Transactional
-    public Map<String, Object> insurer(UUID saleId, UUID eventId) {
+    public Map<String, Object> insurer(UUID saleId, UUID eventId, ProcessHistory.Work work) {
         lockSale(saleId);
         if (done(saleId, INSURER)) return result(saleId, INSURER, "ALREADY_DONE");
         require(saleId, CM);
@@ -87,6 +108,7 @@ public class ProcessService {
         String policyNumber = external.findInsurerPolicy(saleId);
         String outcome = "RECONCILED";
         if (policyNumber == null) {
+            act(work);
             policyNumber = external.sendInsurerPolicy(saleId);
             outcome = "DONE";
         }

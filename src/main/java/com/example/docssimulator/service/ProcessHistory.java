@@ -11,8 +11,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * Step attempt journal and lab work simulation for the AWS flow. Used outside step transactions:
- * rows survive failed attempts, and the simulated work never holds the sale lock.
+ * Step attempt journal and lab work simulation for the AWS flow. The journal is written outside step
+ * transactions so rows survive failed attempts. The simulated work runs inside the step, exactly where
+ * the real work happens (after idempotency checks): ALREADY_DONE, RECONCILED, out-of-order and injected
+ * faults cost nothing, like a real idempotent service.
  */
 @Service
 public class ProcessHistory {
@@ -22,9 +24,15 @@ public class ProcessHistory {
 
     public ProcessHistory(JdbcTemplate db) { this.db = db; }
 
-    /** Simulated work for one step: I/O wait, CPU time and memory held. */
-    public record Work(int delayMs, int cpuMs, int memoryMb) {
-        public static final Work NONE = new Work(0, 0, 0);
+    /** Simulated work for one step: I/O wait, CPU time and memory held. {@code used} = the step really acted. */
+    public record Work(int delayMs, int cpuMs, int memoryMb, java.util.concurrent.atomic.AtomicBoolean used) {
+        public Work(int delayMs, int cpuMs, int memoryMb) {
+            this(delayMs, cpuMs, memoryMb, new java.util.concurrent.atomic.AtomicBoolean());
+        }
+
+        public static Work none() { return new Work(0, 0, 0); }
+
+        public boolean wasUsed() { return used.get(); }
     }
 
     /** Read live from process.lab_settings so SQL or panel changes apply to the next step. */
@@ -32,7 +40,7 @@ public class ProcessHistory {
         var rows = db.queryForList("""
                 SELECT step_delay_min_ms AS min, step_delay_max_ms AS max, step_cpu_ms AS cpu, step_memory_mb AS mem
                 FROM process.lab_settings""");
-        if (rows.isEmpty()) return Work.NONE;
+        if (rows.isEmpty()) return Work.none();
         var r = rows.get(0);
         int min = ((Number) r.get("min")).intValue();
         int max = ((Number) r.get("max")).intValue();
@@ -46,6 +54,7 @@ public class ProcessHistory {
      * the step takes longer, like real work would.
      */
     public static void simulate(Work work) throws InterruptedException {
+        work.used().set(true);
         byte[] held = work.memoryMb() > 0 ? new byte[work.memoryMb() * 1024 * 1024] : null;
         if (held != null) for (int i = 0; i < held.length; i += 4096) held[i] = 1;
         burnCpu(work.cpuMs());
@@ -72,11 +81,18 @@ public class ProcessHistory {
                 Long.class, saleId, step, work.delayMs(), work.cpuMs(), work.memoryMb());
     }
 
-    /** Best effort: a journal failure must not turn a finished step into an error. */
-    public void finish(long id, String outcome, String detail, long durationMs) {
+    /**
+     * Best effort: a journal failure must not turn a finished step into an error. When the step did not act
+     * (already done, reconciled, failed before acting) the planned work is recorded as 0.
+     */
+    public void finish(long id, String outcome, String detail, long durationMs, boolean worked) {
         try {
-            db.update("UPDATE process.history SET outcome=?,detail=?,duration_ms=?,finished_at=now() WHERE id=?",
-                    outcome, detail == null ? null : detail.substring(0, Math.min(500, detail.length())), (int) durationMs, id);
+            db.update("""
+                    UPDATE process.history SET outcome=?,detail=?,duration_ms=?,finished_at=now(),
+                      delay_ms=CASE WHEN ? THEN delay_ms ELSE 0 END,cpu_ms=CASE WHEN ? THEN cpu_ms ELSE 0 END,
+                      memory_mb=CASE WHEN ? THEN memory_mb ELSE 0 END WHERE id=?""",
+                    outcome, detail == null ? null : detail.substring(0, Math.min(500, detail.length())), (int) durationMs,
+                    worked, worked, worked, id);
         } catch (RuntimeException e) {
             log.warn("process_history_update_failed id={} error={}", id, e.toString());
         }
