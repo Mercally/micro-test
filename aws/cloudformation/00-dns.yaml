@@ -1,33 +1,63 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  micro-test AWS lab - 00 dns. Public Route 53 hosted zone for a subdomain delegated
-  from the parent domain's DNS provider (Hostinger). Holds ACM validation and internal API records.
-  After create: add the NameServers output as NS records at the parent provider (aws/DNS.md).
+  micro-test AWS lab - 00 dns. Route 53 public zones: the parent domain (mercally.dev), whose
+  name servers are set at the registrar (Hostinger), and the lab subdomain (aws.mercally.dev),
+  delegated from the parent here. The lab zone holds ACM validation and internal API records.
+  After create: set the NameServers output as the domain name servers at the registrar (aws/DNS.md).
 
 Parameters:
+  ParentZoneName:
+    Type: String
+    Default: mercally.dev
+    AllowedPattern: '^([a-z0-9-]+\.)+[a-z]{2,}$'
+    Description: Domain whose name servers move to Route 53 at the registrar
   ZoneName:
     Type: String
+    Default: aws.mercally.dev
     AllowedPattern: '^([a-z0-9-]+\.)+[a-z]{2,}$'
-    Description: Delegated subdomain, e.g. aws.mercally.com
+    Description: Lab subdomain of ParentZoneName; every lab record lives here
 
 Resources:
-  # ~$0.50/month. Retained on stack delete: recreating it changes the name servers and breaks delegation.
+  # ~$0.50/month each. Retained on stack delete: recreating the parent changes its name servers
+  # and breaks the registrar setting. Parent keeps logical ID HostedZone (earlier single-zone stack).
   HostedZone:
+    Type: AWS::Route53::HostedZone
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Ref ParentZoneName
+      HostedZoneConfig:
+        Comment: micro-test lab parent domain
+
+  LabZone:
     Type: AWS::Route53::HostedZone
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
       Name: !Ref ZoneName
       HostedZoneConfig:
-        Comment: micro-test lab, delegated from parent domain DNS
+        Comment: micro-test lab
+
+  LabDelegation:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      Name: !Ref ZoneName
+      Type: NS
+      TTL: '3600'
+      ResourceRecords: !GetAtt LabZone.NameServers
 
 Outputs:
   HostedZoneId:
-    Value: !Ref HostedZone
+    Description: Lab zone (aws.mercally.dev), used by 06
+    Value: !Ref LabZone
     Export: { Name: !Sub '${AWS::StackName}-HostedZoneId' }
   ZoneName:
     Value: !Ref ZoneName
     Export: { Name: !Sub '${AWS::StackName}-ZoneName' }
+  ParentHostedZoneId:
+    Description: Parent zone; existing records (apex A, www) are copied here
+    Value: !Ref HostedZone
   NameServers:
-    Description: Add each one as an NS record at the parent DNS provider.
+    Description: Set these as the parent domain name servers at the registrar.
     Value: !Join [',', !GetAtt HostedZone.NameServers]

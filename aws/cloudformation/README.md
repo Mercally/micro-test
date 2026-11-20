@@ -7,7 +7,7 @@ Revisión con change sets, fallos y rollback: [CLOUDFORMATION.md](../CLOUDFORMAT
 
 | Orden | Plantilla | Stack | Depende de | IAM | Paso manual | Costo fijo aprox. |
 |---|---|---|---|---|---|---|
-| 00 | `00-dns.yaml` | `micro-test-dns` | — | No | **Sí**: 4 NS en Hostinger ([DNS.md](../DNS.md)) | ~$0.50/mes |
+| 00 | `00-dns.yaml` | `micro-test-dns` | — | No | **Sí**: nameservers de `mercally.dev` en Hostinger ([DNS.md](../DNS.md)) | ~$1/mes (2 zonas) |
 | 01 | `01-network.yaml` | `micro-test-network` | — | No | No | NAT ~$33/mes + datos |
 | 02 | `02-security.yaml` | `micro-test-security` | — | No | No | KMS ~$1/mes |
 | 03 | `03-data.yaml` | `micro-test-data` | 01, 02 | No | Verificar versión Aurora | Aurora pausado: solo almacenamiento; secreto ~$0.40/mes |
@@ -23,8 +23,8 @@ Sin costos ocultos: 00 y 02 retienen sus recursos al borrar (ver Eliminación).
 
 ```bash
 cd <raíz del repo>
-export AWS_REGION=us-east-1          # y AWS_PROFILE si aplica
-aws sts get-caller-identity          # confirmar cuenta correcta
+export AWS_REGION=us-east-1
+aws sts get-caller-identity
 localstack/.venv/bin/cfn-lint --regions us-east-1 -- aws/cloudformation/*.yaml
 python3 -m unittest aws/tests/test_consumer.py
 ```
@@ -57,14 +57,13 @@ aplicar, añadir `--no-execute-changeset` y seguir [CLOUDFORMATION.md](../CLOUDF
 
 ```bash
 aws cloudformation deploy --stack-name micro-test-dns \
-  --template-file aws/cloudformation/00-dns.yaml \
-  --parameter-overrides ZoneName=aws.mercally.com
+  --template-file aws/cloudformation/00-dns.yaml
 aws cloudformation describe-stacks --stack-name micro-test-dns \
   --query "Stacks[0].Outputs[?OutputKey=='NameServers'].OutputValue" --output text
 ```
 
-**Manual:** registrar los 4 NS en Hostinger y verificar — pasos 2 y 3 de [DNS.md](../DNS.md).
-Puede hacerse en paralelo con 01–04; debe estar verificado antes de 06.
+**Manual:** copiar registros existentes, cambiar nameservers en Hostinger y verificar — pasos 1–3 de [DNS.md](../DNS.md).
+Puede hacerse en paralelo con 01–05; debe estar verificado antes de 06.
 
 ## 01 — Red
 
@@ -85,7 +84,6 @@ aws cloudformation deploy --stack-name micro-test-security \
 ## 03 — Aurora y S3 temporal
 
 ```bash
-# La versión debe soportar 0 ACU (16.3+). Si 16.6 no aparece, pasar otra con EngineVersion=...
 aws rds describe-db-engine-versions --engine aurora-postgresql \
   --query "DBEngineVersions[?starts_with(EngineVersion,'16.')].EngineVersion" --output text
 
@@ -110,15 +108,13 @@ Hasta que exista 06 la API privada no es alcanzable: desplegar con el consumo
 **pausado** (`ConsumerEnabled=false`) y `ResourceConfigurationArn` vacío.
 
 ```bash
-# Credencial del workflow (X-Workflow-Key). EventBridge la guarda en Secrets Manager;
-# no se escribe en archivos. Recuperable después desde el secreto de la Connection.
 WORKFLOW_KEY=$(openssl rand -hex 24)
 
 aws cloudformation deploy --stack-name micro-test-messaging \
   --template-file aws/cloudformation/04-messaging.yaml \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides \
-    ApiBaseUrl=https://api-internal.aws.mercally.com \
+    ApiBaseUrl=https://api-internal.aws.mercally.dev \
     WorkflowApiKey="$WORKFLOW_KEY" \
     ConsumerEnabled=false
 unset WORKFLOW_KEY
@@ -144,10 +140,9 @@ de interrupciones de Karpenter. **No** instala Istio, KEDA, Karpenter, LBC ni la
 eso es el bootstrap Kubernetes (siguiente etapa).
 
 ```bash
-# Versión soportada por defecto (pasar KubernetesVersion=... si no es 1.35)
 aws eks describe-cluster-versions --default-only --query "clusterVersions[].clusterVersion" --output text
 
-ADMIN_CIDR="$(curl -s https://checkip.amazonaws.com)/32"   # IP pública desde donde usas kubectl
+ADMIN_CIDR="$(curl -s https://checkip.amazonaws.com)/32"
 
 aws cloudformation deploy --stack-name micro-test-eks \
   --template-file aws/cloudformation/05-eks.yaml \
@@ -159,8 +154,8 @@ Tarda ~15–20 min. La identidad que despliega queda como admin del cluster. Ver
 
 ```bash
 aws eks update-kubeconfig --name micro-test --alias micro-test-aws
-kubectl get nodes -L role,topology.kubernetes.io/zone   # 2 nodos, role=base, misma AZ
-kubectl get pods -n kube-system                          # coredns, metrics-server, aws-node, eks-pod-identity-agent
+kubectl get nodes -L role,topology.kubernetes.io/zone
+kubectl get pods -n kube-system
 aws eks list-pod-identity-associations --cluster-name micro-test --output table
 ```
 
@@ -179,7 +174,7 @@ Pod Identity creado (las service accounts las crean después Helm/manifiestos):
 
 ## 06 — Ingress
 
-Requisito: `dig @1.1.1.1 NS aws.mercally.com +short` ya devuelve los servidores `awsdns`
+Requisito: `dig @1.1.1.1 NS aws.mercally.dev +short` ya devuelve los servidores `awsdns`
 ([DNS.md](../DNS.md) paso 3). Si no, el stack queda esperando la validación ACM hasta fallar.
 
 ```bash
@@ -189,7 +184,7 @@ aws cloudformation describe-stacks --stack-name micro-test-ingress \
   --query "Stacks[0].Outputs" --output table
 ```
 
-Crea: certificado ACM `api-internal.aws.mercally.com` (validación DNS automática), registro
+Crea: certificado ACM `api-internal.aws.mercally.dev` (validación DNS automática), registro
 A alias → NLB interno, NLB con listener TLS 443 → target group IP puerto 8080 (Istio gateway,
 health check `15021/healthz/ready`), API Gateway HTTP con 3 rutas públicas y throttling
 10 rps / burst 20, Resource Gateway + Resource Configuration (VPC Lattice).
@@ -257,17 +252,17 @@ Antes de borrar 05: eliminar NodePools de Karpenter y esperar que sus nodos term
 
 ```bash
 aws s3 rm "s3://micro-test-frontend-$(aws sts get-caller-identity --query Account --output text)-us-east-1" --recursive
-aws cloudformation delete-stack --stack-name micro-test-observability   # 08
-aws cloudformation delete-stack --stack-name micro-test-frontend    # 07
+aws cloudformation delete-stack --stack-name micro-test-observability
+aws cloudformation delete-stack --stack-name micro-test-frontend
 aws cloudformation deploy --stack-name micro-test-messaging --template-file aws/cloudformation/04-messaging.yaml \
-  --capabilities CAPABILITY_IAM --parameter-overrides ResourceConfigurationArn=''   # soltar 06
-aws cloudformation delete-stack --stack-name micro-test-ingress     # 06
-aws cloudformation delete-stack --stack-name micro-test-eks         # 05
-aws cloudformation delete-stack --stack-name micro-test-messaging   # 04
-aws cloudformation delete-stack --stack-name micro-test-data        # 03: deja snapshot final de Aurora (cobra almacenamiento)
-aws cloudformation delete-stack --stack-name micro-test-security    # 02: la llave KMS queda retenida
-aws cloudformation delete-stack --stack-name micro-test-network     # 01
-aws cloudformation delete-stack --stack-name micro-test-dns         # 00: la zona queda retenida
+  --capabilities CAPABILITY_IAM --parameter-overrides ResourceConfigurationArn=''
+aws cloudformation delete-stack --stack-name micro-test-ingress
+aws cloudformation delete-stack --stack-name micro-test-eks
+aws cloudformation delete-stack --stack-name micro-test-messaging
+aws cloudformation delete-stack --stack-name micro-test-data
+aws cloudformation delete-stack --stack-name micro-test-security
+aws cloudformation delete-stack --stack-name micro-test-network
+aws cloudformation delete-stack --stack-name micro-test-dns
 ```
 
 Esperar cada uno con `aws cloudformation wait stack-delete-complete --stack-name <stack>`.

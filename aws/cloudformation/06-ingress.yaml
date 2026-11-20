@@ -37,7 +37,7 @@ Parameters:
     AllowedValues: [1, 3, 5, 7, 14, 30]
 
 Resources:
-  # ---------- Certificate + DNS (zone delegated from Hostinger, aws/DNS.md) ----------
+  # ---------- Certificate + DNS (Route 53 zone from 00, aws/DNS.md) ----------
   # Stack waits here until ACM validates through Route 53: delegation must already work.
   Certificate:
     Type: AWS::CertificateManager::Certificate

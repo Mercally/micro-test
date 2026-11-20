@@ -34,7 +34,7 @@ flowchart LR
 | Necesito… | Documento |
 |---|---|
 | Desplegar stack por stack (orden, comandos, costos, eliminación) | [cloudformation/README.md](cloudformation/README.md) |
-| Delegar `aws.mercally.com` desde Hostinger | [DNS.md](DNS.md) |
+| Mover el DNS de `mercally.dev` (Hostinger) a Route 53; lab en `aws.mercally.dev` | [DNS.md](DNS.md) |
 | Instalar Istio, LBC, KEDA, Karpenter y la app; operar el laboratorio | [kubernetes/README.md](kubernetes/README.md) |
 | Ver componentes, fronteras de seguridad y requisitos IaC | [diagrams/ARQUITECTURA-C4.md](diagrams/ARQUITECTURA-C4.md) |
 | Entender el flujo asíncrono y los reintentos | [diagrams/SECUENCIA-ASYNC.md](diagrams/SECUENCIA-ASYNC.md) |

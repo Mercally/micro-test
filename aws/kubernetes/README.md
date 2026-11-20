@@ -24,7 +24,7 @@ lance un nodo. Ese crecimiento es lo que se observa en el laboratorio.
 ## 0. Validar antes de tocar AWS
 
 ```bash
-aws/kubernetes/validate.sh    # ~45 s; Docker + kind + helm + kubectl; cluster desechable (~1.5 GB)
+aws/kubernetes/validate.sh
 ```
 
 Termina en `VALIDATION OK`. Ejecutarlo tras cambiar manifiestos o versiones de charts.
@@ -78,7 +78,7 @@ SITE=$(aws cloudformation describe-stacks --stack-name micro-test-frontend \
 SALE=$(curl -s -X POST "$SITE/api/v1/purchases" -H 'Content-Type: application/json' \
   -d '{"externalReference":"AWS-001","customerName":"Lab","customerEmail":"lab@example.com","productCode":"AUTO-01"}' |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["saleId"])')
-sleep 20; curl -s "$SITE/api/v1/purchases/$SALE" | python3 -m json.tool   # status COMPLETED, 3 steps
+sleep 20; curl -s "$SITE/api/v1/purchases/$SALE" | python3 -m json.tool
 ```
 
 También desde la UI: `$SITE` con URL base `/api/v1`.
@@ -98,14 +98,11 @@ También desde la UI: `$SITE` con URL base `/api/v1`.
 ## Simular fallos
 
 ```bash
-# Fallo transitorio 2 veces en el paso CM (se recupera con los reintentos del paso)
 curl -s -X POST "$SITE/api/v1/purchases" -H 'Content-Type: application/json' -H 'X-Lab-Failure: cm:transient:2' \
   -d '{"externalReference":"AWS-F1","customerName":"Lab","customerEmail":"lab@example.com","productCode":"AUTO-01"}'
-# Fallo permanente en Aseguradora (3 entregas → FAILED → DLQ → alarma)
-#   -H 'X-Lab-Failure: insurer:permanent:1'
-kubectl -n micro delete pod -l app=api                     # caída de la API
-kubectl -n micro scale deploy/mocks --replicas=0           # CM/Aseguradora caídos
-kubectl delete node -l karpenter.sh/nodepool=workloads     # pérdida de nodo: Karpenter repone
+kubectl -n micro delete pod -l app=api
+kubectl -n micro scale deploy/mocks --replicas=0
+kubectl delete node -l karpenter.sh/nodepool=workloads
 ```
 
 Pasos válidos para `X-Lab-Failure`: `document`, `cm`, `insurer`.
@@ -123,7 +120,7 @@ Observar en paralelo (429 = throttling de la API pública, es esperado):
 
 ```bash
 kubectl get nodes -L karpenter.sh/capacity-type,node.kubernetes.io/instance-type -w
-kubectl -n micro get hpa,pods -w           # HPA creado por KEDA
+kubectl -n micro get hpa,pods -w
 aws sqs get-queue-attributes --queue-url "$(aws cloudformation list-exports \
   --query "Exports[?Name=='micro-test-messaging-QueueUrl'].Value" --output text)" \
   --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible
@@ -132,8 +129,6 @@ aws sqs get-queue-attributes --queue-url "$(aws cloudformation list-exports \
 ## Detener (sin borrar)
 
 ```bash
-# 1. Consumo pausado: ConsumerEnabled=false (04)
-# 2. App a cero: KEDA respeta la anotación de pausa
 kubectl -n micro annotate scaledobject api autoscaling.keda.sh/paused-replicas=0 --overwrite
 kubectl -n micro scale deploy/worker deploy/mocks --replicas=0
 ```
