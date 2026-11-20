@@ -223,7 +223,7 @@ public class WorkflowService {
         return "sales/" + saleId + "/" + documentId + ".pdf";
     }
 
-    private byte[] createPdf(UUID saleId) {
+    byte[] createPdf(UUID saleId) {
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage();
             document.addPage(page);

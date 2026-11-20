@@ -1,0 +1,576 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 04 messaging. SQS + DLQ, Lambda consumer (lease pattern N02),
+  Step Functions Standard with idempotent HTTP steps (N13), EventBridge Connection,
+  DLQ alarm logged to CloudWatch (N15).
+
+Parameters:
+  Project:
+    Type: String
+    Default: micro-test
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  SecurityStack:
+    Type: String
+    Default: micro-test-security
+  ApiBaseUrl:
+    Type: String
+    AllowedPattern: '^https://[a-z0-9.-]+$'
+    Description: Internal API host served by the NLB with a public ACM certificate, e.g. https://api-internal.example.com
+  ResourceConfigurationArn:
+    Type: String
+    Default: ''
+    Description: VPC Lattice resource configuration for the NLB (ingress stack). Empty until it exists - HTTP steps fail meanwhile.
+  WorkflowApiKey:
+    Type: String
+    NoEcho: true
+    MinLength: 24
+    Description: Workflow credential sent as X-Workflow-Key. Stored by EventBridge in Secrets Manager. Enforcement in Istio/API pending (D07).
+  MaxReceiveCount:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    Description: Deliveries (global retries) before the DLQ.
+  ReleaseDelaySeconds:
+    Type: Number
+    Default: 30
+    MinValue: 0
+    MaxValue: 900
+  MaxConcurrency:
+    Type: Number
+    Default: 2
+    MinValue: 2
+    MaxValue: 1000
+    Description: Max concurrent Lambda consumers = max concurrent executions (each waits for its own). Admission control knob.
+  ConsumerEnabled:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: 'false pauses consumption: messages accumulate in SQS.'
+  LogRetentionDays:
+    Type: Number
+    Default: 7
+    AllowedValues: [1, 3, 5, 7, 14, 30]
+
+Conditions:
+  ConsumerOn: !Equals [!Ref ConsumerEnabled, 'true']
+  PrivateConnection: !Not [!Equals [!Ref ResourceConfigurationArn, '']]
+
+Resources:
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${Project}-purchases-dlq'
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+      KmsDataKeyReusePeriodSeconds: 3600
+
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${Project}-purchases'
+      # Must exceed the state machine TimeoutSeconds (300) or a running execution loses its lease.
+      VisibilityTimeout: 360
+      MessageRetentionPeriod: 345600
+      KmsMasterKeyId: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+      KmsDataKeyReusePeriodSeconds: 3600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: !Ref MaxReceiveCount
+
+  # ---------- Step Functions ----------
+  Connection:
+    Type: AWS::Events::Connection
+    Properties:
+      Name: !Sub '${Project}-api-internal'
+      AuthorizationType: API_KEY
+      AuthParameters:
+        ApiKeyAuthParameters:
+          ApiKeyName: X-Workflow-Key
+          ApiKeyValue: !Ref WorkflowApiKey
+      InvocationConnectivityParameters: !If
+        - PrivateConnection
+        - ResourceParameters:
+            ResourceConfigurationArn: !Ref ResourceConfigurationArn
+        - !Ref AWS::NoValue
+
+  StateMachineLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/${Project}-purchase'
+      RetentionInDays: !Ref LogRetentionDays
+
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: states.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition: { StringEquals: { 'aws:SourceAccount': !Ref AWS::AccountId } }
+      Policies:
+        - PolicyName: purchase-workflow
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:InvokeHTTPEndpoint
+                Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${Project}-purchase'
+                Condition:
+                  StringLike: { 'states:HTTPEndpoint': !Sub '${ApiBaseUrl}/api/v1/internal/purchases/*' }
+              - Effect: Allow
+                Action: events:RetrieveConnectionCredentials
+                Resource: !GetAtt Connection.Arn
+              - Effect: Allow
+                Action: [secretsmanager:GetSecretValue, secretsmanager:DescribeSecret]
+                Resource: !GetAtt Connection.SecretArn
+              - Effect: Allow
+                Action: [sqs:DeleteMessage, sqs:ChangeMessageVisibility]
+                Resource: !GetAtt Queue.Arn
+              # Vended logs delivery for state machine logging (AWS requires Resource *).
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+  StateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${Project}-purchase'
+      StateMachineType: STANDARD
+      RoleArn: !GetAtt StateMachineRole.Arn
+      LoggingConfiguration:
+        Level: ERROR
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup: { LogGroupArn: !GetAtt StateMachineLogs.Arn }
+      DefinitionSubstitutions:
+        ApiBaseUrl: !Ref ApiBaseUrl
+        ConnectionArn: !GetAtt Connection.Arn
+        QueueUrl: !Ref Queue
+      # ASL: 3 idempotent steps (N13), lease close/release on SQS (N02). Single source of truth.
+      Definition:
+        Comment: 'micro-test AWS: SQS lease (N02). Input from Lambda consumer: {messageId, receiptHandle, receiveCount, maxReceiveCount,
+          releaseDelaySeconds, body:{saleId,eventId,correlationId}}. Placeholders resolved by CloudFormation DefinitionSubstitutions.'
+        StartAt: Document
+        TimeoutSeconds: 300
+        States:
+          Document:
+            Type: Task
+            Comment: 'POST /steps/document: idempotent; checks state, reconciles, acts only if missing'
+            Resource: arn:aws:states:::http:invoke
+            Parameters:
+              ApiEndpoint.$: States.Format('${ApiBaseUrl}/api/v1/internal/purchases/{}/steps/document', $.body.saleId)
+              Method: POST
+              InvocationConfig:
+                ConnectionArn: ${ConnectionArn}
+              Headers:
+                Content-Type: application/json
+                X-Correlation-Id.$: $.body.correlationId
+              RequestBody:
+                eventId.$: $.body.eventId
+            TimeoutSeconds: 20
+            ResultSelector:
+              body.$: $.ResponseBody
+            ResultPath: $.steps.document
+            Retry:
+            - ErrorEquals:
+              - States.Http.StatusCode.408
+              - States.Http.StatusCode.429
+              - States.Http.StatusCode.500
+              - States.Http.StatusCode.502
+              - States.Http.StatusCode.503
+              - States.Http.StatusCode.504
+              - States.Timeout
+              IntervalSeconds: 2
+              MaxAttempts: 2
+              BackoffRate: 2
+              JitterStrategy: FULL
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: IsLastDelivery
+            Next: ContentManager
+          ContentManager:
+            Type: Task
+            Comment: 'POST /steps/cm: idempotent; checks state, reconciles, acts only if missing'
+            Resource: arn:aws:states:::http:invoke
+            Parameters:
+              ApiEndpoint.$: States.Format('${ApiBaseUrl}/api/v1/internal/purchases/{}/steps/cm', $.body.saleId)
+              Method: POST
+              InvocationConfig:
+                ConnectionArn: ${ConnectionArn}
+              Headers:
+                Content-Type: application/json
+                X-Correlation-Id.$: $.body.correlationId
+              RequestBody:
+                eventId.$: $.body.eventId
+            TimeoutSeconds: 20
+            ResultSelector:
+              body.$: $.ResponseBody
+            ResultPath: $.steps.cm
+            Retry:
+            - ErrorEquals:
+              - States.Http.StatusCode.408
+              - States.Http.StatusCode.429
+              - States.Http.StatusCode.500
+              - States.Http.StatusCode.502
+              - States.Http.StatusCode.503
+              - States.Http.StatusCode.504
+              - States.Timeout
+              IntervalSeconds: 2
+              MaxAttempts: 2
+              BackoffRate: 2
+              JitterStrategy: FULL
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: IsLastDelivery
+            Next: Insurer
+          Insurer:
+            Type: Task
+            Comment: 'POST /steps/insurer: idempotent; checks state, reconciles, acts only if missing'
+            Resource: arn:aws:states:::http:invoke
+            Parameters:
+              ApiEndpoint.$: States.Format('${ApiBaseUrl}/api/v1/internal/purchases/{}/steps/insurer', $.body.saleId)
+              Method: POST
+              InvocationConfig:
+                ConnectionArn: ${ConnectionArn}
+              Headers:
+                Content-Type: application/json
+                X-Correlation-Id.$: $.body.correlationId
+              RequestBody:
+                eventId.$: $.body.eventId
+            TimeoutSeconds: 20
+            ResultSelector:
+              body.$: $.ResponseBody
+            ResultPath: $.steps.insurer
+            Retry:
+            - ErrorEquals:
+              - States.Http.StatusCode.408
+              - States.Http.StatusCode.429
+              - States.Http.StatusCode.500
+              - States.Http.StatusCode.502
+              - States.Http.StatusCode.503
+              - States.Http.StatusCode.504
+              - States.Timeout
+              IntervalSeconds: 2
+              MaxAttempts: 2
+              BackoffRate: 2
+              JitterStrategy: FULL
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: IsLastDelivery
+            Next: DeleteMessage
+          DeleteMessage:
+            Type: Task
+            Comment: 'Process finished: close the SQS lease. Failure here only causes a harmless redelivery.'
+            Resource: arn:aws:states:::aws-sdk:sqs:deleteMessage
+            Parameters:
+              QueueUrl: ${QueueUrl}
+              ReceiptHandle.$: $.receiptHandle
+            ResultPath: null
+            Retry:
+            - ErrorEquals:
+              - States.ALL
+              IntervalSeconds: 1
+              MaxAttempts: 2
+              BackoffRate: 2
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.deleteFailure
+              Next: Cleanup
+            Next: Cleanup
+          Cleanup:
+            Type: Task
+            Comment: 'POST /steps/cleanup: idempotent; checks state, reconciles, acts only if missing'
+            Resource: arn:aws:states:::http:invoke
+            Parameters:
+              ApiEndpoint.$: States.Format('${ApiBaseUrl}/api/v1/internal/purchases/{}/steps/cleanup', $.body.saleId)
+              Method: POST
+              InvocationConfig:
+                ConnectionArn: ${ConnectionArn}
+              Headers:
+                Content-Type: application/json
+                X-Correlation-Id.$: $.body.correlationId
+              RequestBody:
+                eventId.$: $.body.eventId
+            TimeoutSeconds: 20
+            ResultSelector:
+              body.$: $.ResponseBody
+            ResultPath: $.steps.cleanup
+            Retry:
+            - ErrorEquals:
+              - States.Http.StatusCode.408
+              - States.Http.StatusCode.429
+              - States.Http.StatusCode.500
+              - States.Http.StatusCode.502
+              - States.Http.StatusCode.503
+              - States.Http.StatusCode.504
+              - States.Timeout
+              IntervalSeconds: 2
+              MaxAttempts: 2
+              BackoffRate: 2
+              JitterStrategy: FULL
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.cleanupFailure
+              Next: Completed
+            Next: Completed
+          Completed:
+            Type: Succeed
+          IsLastDelivery:
+            Type: Choice
+            Comment: 'Global retry: SQS redelivers until maxReceiveCount, then redrives to the DLQ.'
+            Choices:
+            - Variable: $.receiveCount
+              NumericGreaterThanEqualsPath: $.maxReceiveCount
+              Next: MarkFailed
+            Default: Release
+          MarkFailed:
+            Type: Task
+            Comment: 'POST /steps/fail: idempotent; checks state, reconciles, acts only if missing'
+            Resource: arn:aws:states:::http:invoke
+            Parameters:
+              ApiEndpoint.$: States.Format('${ApiBaseUrl}/api/v1/internal/purchases/{}/steps/fail', $.body.saleId)
+              Method: POST
+              InvocationConfig:
+                ConnectionArn: ${ConnectionArn}
+              Headers:
+                Content-Type: application/json
+                X-Correlation-Id.$: $.body.correlationId
+              RequestBody:
+                error.$: $.failure.Error
+            TimeoutSeconds: 20
+            ResultSelector:
+              body.$: $.ResponseBody
+            ResultPath: $.steps.fail
+            Retry:
+            - ErrorEquals:
+              - States.Http.StatusCode.408
+              - States.Http.StatusCode.429
+              - States.Http.StatusCode.500
+              - States.Http.StatusCode.502
+              - States.Http.StatusCode.503
+              - States.Http.StatusCode.504
+              - States.Timeout
+              IntervalSeconds: 2
+              MaxAttempts: 2
+              BackoffRate: 2
+              JitterStrategy: FULL
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.markFailedFailure
+              Next: Release
+            Next: Release
+          Release:
+            Type: Task
+            Comment: Release the message for global retry after releaseDelaySeconds (on the last delivery it then moves to the DLQ).
+            Resource: arn:aws:states:::aws-sdk:sqs:changeMessageVisibility
+            Parameters:
+              QueueUrl: ${QueueUrl}
+              ReceiptHandle.$: $.receiptHandle
+              VisibilityTimeout.$: $.releaseDelaySeconds
+            ResultPath: null
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.releaseFailure
+              Next: Failed
+            Next: Failed
+          Failed:
+            Type: Fail
+            Error: PurchaseStepFailed
+            Cause: Step exhausted its retries; message released for global retry
+
+  # ---------- Lambda consumer ----------
+  ConsumerLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Project}-consumer'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ConsumerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: consumer
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes, sqs:ChangeMessageVisibility]
+                Resource: !GetAtt Queue.Arn
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !GetAtt StateMachine.Arn
+              - Effect: Allow
+                Action: states:DescribeExecution
+                Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${Project}-purchase:*'
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ConsumerLogs.Arn
+
+  Consumer:
+    Type: AWS::Lambda::Function
+    DependsOn: ConsumerLogs
+    Properties:
+      FunctionName: !Sub '${Project}-consumer'
+      Description: One execution per SQS delivery; waits for it so ESM MaximumConcurrency = concurrent executions.
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: index.handler
+      MemorySize: 128
+      # > state machine TimeoutSeconds (300) and < queue VisibilityTimeout (360).
+      Timeout: 330
+      Role: !GetAtt ConsumerRole.Arn
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !GetAtt StateMachine.Arn
+          MAX_RECEIVE_COUNT: !Ref MaxReceiveCount
+          RELEASE_DELAY_SECONDS: !Ref ReleaseDelaySeconds
+      Code:
+        ZipFile: |
+          import json, os, time, boto3
+
+          sfn = boto3.client("stepfunctions")
+          ARN = os.environ["STATE_MACHINE_ARN"]
+          EXECUTIONS = ARN.replace(":stateMachine:", ":execution:") + ":"
+          MAX = int(os.environ["MAX_RECEIVE_COUNT"])
+          DELAY = int(os.environ["RELEASE_DELAY_SECONDS"])
+          POLL = float(os.environ.get("POLL_SECONDS", "2"))
+
+
+          def run(record, context):
+              count = int(record["attributes"]["ApproximateReceiveCount"])
+              body = json.loads(record["body"])
+              execution = {
+                  "messageId": record["messageId"],
+                  "receiptHandle": record["receiptHandle"],
+                  "receiveCount": count,
+                  "maxReceiveCount": MAX,
+                  "releaseDelaySeconds": DELAY,
+                  "body": {k: str(body[k]) for k in ("saleId", "eventId", "correlationId")},
+              }
+              name = f"{record['messageId']}-{count}"
+              try:
+                  # One execution per delivery. A Lambda retry of the same delivery reuses the name.
+                  arn = sfn.start_execution(stateMachineArn=ARN, name=name, input=json.dumps(execution))["executionArn"]
+              except sfn.exceptions.ExecutionAlreadyExists:
+                  arn = EXECUTIONS + name
+              print(json.dumps({"event": "execution_started", "messageId": record["messageId"],
+                                "receiveCount": count, "saleId": execution["body"]["saleId"]}))
+              # Stay busy while the execution runs: N busy consumers = N running executions,
+              # so ESM MaximumConcurrency is the admission control into Step Functions and the API.
+              status = "RUNNING"
+              while status == "RUNNING" and context.get_remaining_time_in_millis() > 5000:
+                  time.sleep(POLL)
+                  status = sfn.describe_execution(executionArn=arn)["status"]
+              print(json.dumps({"event": "execution_finished", "messageId": record["messageId"], "status": status}))
+
+
+          def handler(event, context):
+              for record in event["Records"]:
+                  try:
+                      run(record, context)
+                  except Exception as error:  # invalid body or StartExecution failure: message reappears, then DLQ
+                      print(json.dumps({"event": "start_failed", "messageId": record["messageId"], "error": repr(error)}))
+              # Always report every item as failed so the ESM never deletes it: the state machine
+              # deletes on success or releases it for the global retry (lease pattern N02).
+              return {"batchItemFailures": [{"itemIdentifier": r["messageId"]} for r in event["Records"]]}
+
+  ConsumerMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt Queue.Arn
+      FunctionName: !Ref Consumer
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      ScalingConfig: { MaximumConcurrency: !Ref MaxConcurrency }
+      Enabled: !If [ConsumerOn, true, false]
+
+  # ---------- DLQ observability (N15): alarm + every state change logged ----------
+  DlqAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Project}-purchases-dlq-not-empty'
+      AlarmDescription: Purchases exhausted global retries. Inspect DLQ and state machine error logs.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt DeadLetterQueue.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  AlarmEventsLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/events/${Project}-alarms'
+      RetentionInDays: !Ref LogRetentionDays
+
+  AlarmEventsLogsPolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Properties:
+      PolicyName: !Sub '${Project}-alarm-events'
+      PolicyDocument: !Sub |
+        {"Version":"2012-10-17","Statement":[{"Effect":"Allow",
+          "Principal":{"Service":["events.amazonaws.com","delivery.logs.amazonaws.com"]},
+          "Action":["logs:CreateLogStream","logs:PutLogEvents"],
+          "Resource":"${AlarmEventsLogs.Arn}"}]}
+
+  # ponytail: log only. SNS email = add an SNS topic as a second target (or AlarmActions).
+  DlqAlarmToLogs:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Log DLQ alarm state changes
+      EventPattern:
+        source: [aws.cloudwatch]
+        detail-type: [CloudWatch Alarm State Change]
+        resources: [!GetAtt DlqAlarm.Arn]
+      Targets:
+        - Id: logs
+          Arn: !GetAtt AlarmEventsLogs.Arn
+
+Outputs:
+  QueueUrl:
+    Value: !Ref Queue
+    Export: { Name: !Sub '${AWS::StackName}-QueueUrl' }
+  QueueArn:
+    Value: !GetAtt Queue.Arn
+    Export: { Name: !Sub '${AWS::StackName}-QueueArn' }
+  QueueName:
+    Value: !GetAtt Queue.QueueName
+    Export: { Name: !Sub '${AWS::StackName}-QueueName' }
+  DeadLetterQueueUrl:
+    Value: !Ref DeadLetterQueue
+  StateMachineArn:
+    Value: !GetAtt StateMachine.Arn
+  ConnectionArn:
+    Value: !GetAtt Connection.Arn

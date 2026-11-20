@@ -1,0 +1,254 @@
+# Application: one image, three Deployments (N06, N14). Rendered by bootstrap.sh.
+# Secrets (db, workflow key) are never in this file: bootstrap.sh reads them from AWS at apply time.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: micro
+  labels:
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: api, namespace: micro }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: worker, namespace: micro }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: mocks, namespace: micro }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: app, namespace: micro }
+data:
+  AWS_REGION: ${AWS_REGION}
+  S3_BUCKET: ${DOCUMENTS_BUCKET}
+  LAB_PURCHASES_ENABLED: "true"
+  SIMULATOR_FAILURE_PROBABILITY: "0"       # legacy random faults off; lab faults via X-Lab-Failure
+  CM_URL: http://mocks.micro.svc.cluster.local:8080/mock/cm
+  INSURER_URL: http://mocks.micro.svc.cluster.local:8080/mock/insurer
+---
+# ---------- api: public routes + internal steps (Step Functions); replicas owned by KEDA ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api, namespace: micro }
+spec:
+  selector: { matchLabels: { app: api } }
+  template:
+    metadata:
+      labels: { app: api }
+      annotations:
+        sidecar.istio.io/proxyCPU: 50m
+        sidecar.istio.io/proxyMemory: 64Mi
+        instrumentation.opentelemetry.io/inject-java: "true"   # ADOT agent -> Application Signals
+    spec:
+      serviceAccountName: api
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions: [{ key: karpenter.sh/nodepool, operator: In, values: [workloads] }]
+      containers:
+        - name: app
+          image: ${IMAGE}
+          ports: [{ containerPort: 8080, name: http }]
+          envFrom:
+            - configMapRef: { name: app }
+            - secretRef: { name: db }
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=75" }   # in env: the agent injector appends to it
+          resources:
+            requests: { cpu: 100m, memory: 384Mi }
+            limits: { memory: 768Mi }
+          startupProbe:                      # JVM start + Aurora resume from pause (~15 s)
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api, namespace: micro }
+spec:
+  selector: { app: api }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+# ---------- worker: outbox -> SQS ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: worker, namespace: micro }
+spec:
+  replicas: 1                                # SKIP LOCKED allows more; 1 is enough
+  selector: { matchLabels: { app: worker } }
+  template:
+    metadata:
+      labels: { app: worker }
+      annotations:
+        sidecar.istio.io/proxyCPU: 50m
+        sidecar.istio.io/proxyMemory: 64Mi
+        instrumentation.opentelemetry.io/inject-java: "true"   # ADOT agent -> Application Signals
+    spec:
+      serviceAccountName: worker
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions: [{ key: karpenter.sh/nodepool, operator: In, values: [workloads] }]
+      containers:
+        - name: app
+          image: ${IMAGE}
+          ports: [{ containerPort: 8080, name: http }]
+          envFrom:
+            - configMapRef: { name: app }
+            - secretRef: { name: db }
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=75" }   # in env: the agent injector appends to it
+            - { name: WORKER_ENABLED, value: "true" }
+            - { name: QUEUE_URL, value: "${QUEUE_URL}" }
+          resources:
+            requests: { cpu: 100m, memory: 384Mi }
+            limits: { memory: 768Mi }
+          startupProbe:                      # JVM start + Aurora resume from pause (~15 s)
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 20
+---
+# ---------- mocks: Content Manager + insurer ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mocks, namespace: micro }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: mocks } }
+  template:
+    metadata:
+      labels: { app: mocks }
+      annotations:
+        sidecar.istio.io/proxyCPU: 50m
+        sidecar.istio.io/proxyMemory: 64Mi
+        instrumentation.opentelemetry.io/inject-java: "true"   # ADOT agent -> Application Signals
+    spec:
+      serviceAccountName: mocks
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions: [{ key: karpenter.sh/nodepool, operator: In, values: [workloads] }]
+      containers:
+        - name: app
+          image: ${IMAGE}
+          ports: [{ containerPort: 8080, name: http }]
+          envFrom:
+            - configMapRef: { name: app }
+            - secretRef: { name: db }
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=75" }   # in env: the agent injector appends to it
+            - { name: MOCKS_ENABLED, value: "true" }
+            - { name: MOCKS_FAILURE_PROBABILITY, value: "${MOCKS_FAILURE_PROBABILITY}" }
+            - { name: MOCKS_LATENCY_MS, value: "${MOCKS_LATENCY_MS}" }
+          resources:
+            requests: { cpu: 100m, memory: 384Mi }
+            limits: { memory: 768Mi }
+          startupProbe:                      # JVM start + Aurora resume from pause (~15 s)
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mocks, namespace: micro }
+spec:
+  selector: { app: mocks }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+# ---------- routing: only /api/v1/* enters through the gateway ----------
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata: { name: api, namespace: micro }
+spec:
+  hosts: ["*"]
+  gateways: [istio-ingress/public]
+  http:
+    - match: [{ uri: { prefix: /api/v1/ } }]
+      route: [{ destination: { host: api.micro.svc.cluster.local, port: { number: 8080 } } }]
+      timeout: 25s
+      retries: { attempts: 0 }               # Step Functions owns retries; avoid multiplying them
+---
+# ---------- authorization ----------
+# /internal/* requires the workflow credential (EventBridge Connection header). D07.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: api-internal-requires-workflow-key, namespace: micro }
+spec:
+  selector: { matchLabels: { app: api } }
+  action: DENY
+  rules:
+    - to: [{ operation: { paths: ["/api/v1/internal/*"] } }]
+      when: [{ key: "request.headers[x-workflow-key]", notValues: ["${WORKFLOW_KEY}"] }]
+---
+# api accepts traffic only from the ingress gateway (plus kubelet probes, rewritten by Istio).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: api-from-gateway, namespace: micro }
+spec:
+  selector: { matchLabels: { app: api } }
+  action: ALLOW
+  rules:
+    - from: [{ source: { principals: ["cluster.local/ns/istio-ingress/sa/istio-ingressgateway"] } }]
+---
+# mocks accept traffic only from api pods.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: mocks-from-api, namespace: micro }
+spec:
+  selector: { matchLabels: { app: mocks } }
+  action: ALLOW
+  rules:
+    - from: [{ source: { principals: ["cluster.local/ns/micro/sa/api"] } }]
+---
+# ---------- scaling: KEDA on SQS depth ----------
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata: { name: aws, namespace: micro }
+spec:
+  podIdentity: { provider: aws }            # KEDA operator role (Pod Identity, 05-eks)
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata: { name: api, namespace: micro }
+spec:
+  scaleTargetRef: { name: api }
+  minReplicaCount: 1
+  maxReplicaCount: ${API_MAX_REPLICAS}
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    # visible + in-flight per replica. maxReplicaCount is derived from MaxConcurrency (bootstrap.sh),
+    # so a large backlog never creates pods that admitted executions cannot use.
+    # No CPU trigger: with 100m requests a busy JVM is always >70% and would force max replicas.
+    - type: aws-sqs-queue
+      authenticationRef: { name: aws }
+      metadata:
+        queueURL: ${QUEUE_URL}
+        awsRegion: ${AWS_REGION}
+        queueLength: "${API_MESSAGES_PER_POD}"

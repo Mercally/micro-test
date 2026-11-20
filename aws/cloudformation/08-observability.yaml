@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 08 observability. Enables Application Signals in the account and one
+  CloudWatch dashboard that follows a purchase end to end: API Gateway -> SQS -> Lambda admission
+  -> Step Functions -> API (Application Signals) -> EKS capacity (Container Insights) -> Aurora.
+
+Parameters:
+  Project:
+    Type: String
+    Default: micro-test
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  ClusterName:
+    Type: String
+    Default: micro-test
+  IngressStack:
+    Type: String
+    Default: micro-test-ingress
+
+Resources:
+  # Account-level switch (creates the service-linked role). Idempotent.
+  ApplicationSignalsDiscovery:
+    Type: AWS::ApplicationSignals::Discovery
+
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${Project}-lab'
+      DashboardBody: !Sub
+        - |
+          {
+            "start": "-PT1H",
+            "periodOverride": "inherit",
+            "widgets": [
+              {"type":"text","x":0,"y":0,"width":24,"height":2,"properties":{"markdown":"## ${Project} — compra de punta a punta\nAdmisión = `MaxConcurrency` (Lambda ocupada = ejecución activa). Pods: KEDA (SQS) · Nodos: Karpenter · Techo DB: ACU."}},
+
+              {"type":"metric","x":0,"y":2,"width":8,"height":6,"properties":{"title":"1. API pública (API Gateway)","region":"${AWS::Region}","stat":"Sum","period":60,
+                "metrics":[["AWS/ApiGateway","Count","ApiId","${ApiId}"],[".","4xx",".","."],[".","5xx",".","."]]}},
+              {"type":"metric","x":8,"y":2,"width":8,"height":6,"properties":{"title":"2. Cola principal y DLQ","region":"${AWS::Region}","stat":"Maximum","period":60,
+                "metrics":[["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","${Project}-purchases",{"label":"pendientes"}],
+                           [".","ApproximateNumberOfMessagesNotVisible",".",".",{"label":"en vuelo"}],
+                           [".","ApproximateNumberOfMessagesVisible",".","${Project}-purchases-dlq",{"label":"DLQ"}]]}},
+              {"type":"metric","x":16,"y":2,"width":8,"height":6,"properties":{"title":"3. Admisión (Lambda consumidora)","region":"${AWS::Region}","period":60,
+                "metrics":[["AWS/Lambda","ConcurrentExecutions","FunctionName","${Project}-consumer",{"stat":"Maximum","label":"ejecuciones activas"}],
+                           [".","Errors",".",".",{"stat":"Sum"}],[".","Throttles",".",".",{"stat":"Sum"}]]}},
+
+              {"type":"metric","x":0,"y":8,"width":8,"height":6,"properties":{"title":"4. Workflow (Step Functions)","region":"${AWS::Region}","stat":"Sum","period":60,
+                "metrics":[["AWS/States","ExecutionsStarted","StateMachineArn","${StateMachineArn}"],[".","ExecutionsSucceeded",".","."],
+                           [".","ExecutionsFailed",".","."],[".","ExecutionsTimedOut",".","."]]}},
+              {"type":"metric","x":8,"y":8,"width":8,"height":6,"properties":{"title":"5. API: latencia p99 por endpoint (Application Signals)","region":"${AWS::Region}","period":60,
+                "metrics":[[{"expression":"SEARCH('Namespace=\"ApplicationSignals\" MetricName=\"Latency\" Service=\"api\"', 'p99', 60)","id":"lat"}]]}},
+              {"type":"metric","x":16,"y":8,"width":8,"height":6,"properties":{"title":"6. API: faults 5xx y errores 4xx por endpoint","region":"${AWS::Region}","period":60,
+                "metrics":[[{"expression":"SEARCH('Namespace=\"ApplicationSignals\" MetricName=\"Fault\" Service=\"api\"', 'Sum', 60)","id":"fault"}],
+                           [{"expression":"SEARCH('Namespace=\"ApplicationSignals\" MetricName=\"Error\" Service=\"api\"', 'Sum', 60)","id":"err"}]]}},
+
+              {"type":"metric","x":0,"y":14,"width":8,"height":6,"properties":{"title":"7. Pods por servicio (KEDA)","region":"${AWS::Region}","period":60,
+                "metrics":[[{"expression":"SEARCH('{ContainerInsights,ClusterName,Namespace,Service} MetricName=\"service_number_of_running_pods\" ClusterName=\"${ClusterName}\" Namespace=\"micro\"', 'Average', 60)","id":"pods"}]]}},
+              {"type":"metric","x":8,"y":14,"width":8,"height":6,"properties":{"title":"8. Nodos (base + Karpenter)","region":"${AWS::Region}","stat":"Maximum","period":60,
+                "metrics":[["ContainerInsights","cluster_node_count","ClusterName","${ClusterName}"],[".","node_cpu_utilization",".",".",{"stat":"Average","yAxis":"right"}]]}},
+              {"type":"metric","x":16,"y":14,"width":8,"height":6,"properties":{"title":"9. Aurora: ACU y conexiones","region":"${AWS::Region}","stat":"Maximum","period":60,
+                "metrics":[["AWS/RDS","ServerlessDatabaseCapacity","DBClusterIdentifier","${Project}-aurora"],[".","DatabaseConnections",".",".",{"yAxis":"right"}]]}},
+
+              {"type":"log","x":0,"y":20,"width":24,"height":6,"properties":{"title":"Pasos del proceso (logs de la API)","region":"${AWS::Region}","view":"table",
+                "query":"SOURCE '/aws/containerinsights/${ClusterName}/application' | fields @timestamp, kubernetes.labels.app as app, log | filter log like /process_step|outbox_published|outbox_publish_failed|ERROR/ | sort @timestamp desc | limit 50"}}
+            ]
+          }
+        - ApiId: { 'Fn::ImportValue': !Sub '${IngressStack}-HttpApiId' }
+          StateMachineArn: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${Project}-purchase'
+
+Outputs:
+  DashboardUrl:
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards/dashboard/${Project}-lab'
+  ApplicationSignalsUrl:
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#application-signals:services'

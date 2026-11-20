@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 00 dns. Public Route 53 hosted zone for a subdomain delegated
+  from the parent domain's DNS provider (Hostinger). Holds ACM validation and internal API records.
+  After create: add the NameServers output as NS records at the parent provider (aws/DNS.md).
+
+Parameters:
+  ZoneName:
+    Type: String
+    AllowedPattern: '^([a-z0-9-]+\.)+[a-z]{2,}$'
+    Description: Delegated subdomain, e.g. aws.mercally.com
+
+Resources:
+  # ~$0.50/month. Retained on stack delete: recreating it changes the name servers and breaks delegation.
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Ref ZoneName
+      HostedZoneConfig:
+        Comment: micro-test lab, delegated from parent domain DNS
+
+Outputs:
+  HostedZoneId:
+    Value: !Ref HostedZone
+    Export: { Name: !Sub '${AWS::StackName}-HostedZoneId' }
+  ZoneName:
+    Value: !Ref ZoneName
+    Export: { Name: !Sub '${AWS::StackName}-ZoneName' }
+  NameServers:
+    Description: Add each one as an NS record at the parent DNS provider.
+    Value: !Join [',', !GetAtt HostedZone.NameServers]

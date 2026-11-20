@@ -87,6 +87,31 @@ CREATE INDEX IF NOT EXISTS outbox_pending ON endpoint0.outbox(available_at, crea
     WHERE published_at IS NULL;
 
 -- Durable, explicit lab faults. A separate transaction consumes each failed attempt.
+-- AWS flow (N02): one row per completed step. Absence = not done. Steps check this before acting.
+CREATE SCHEMA IF NOT EXISTS process;
+CREATE TABLE IF NOT EXISTS process.steps (
+    sale_id UUID NOT NULL REFERENCES endpoint0.sales(id),
+    step VARCHAR(32) NOT NULL,
+    reference TEXT NOT NULL,
+    outcome VARCHAR(16) NOT NULL,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (sale_id, step)
+);
+
+-- Lab-only stand-ins for Content Manager and the insurer. Idempotent by sale.
+CREATE SCHEMA IF NOT EXISTS mock;
+CREATE TABLE IF NOT EXISTS mock.cm_documents (
+    sale_id UUID PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    stored_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS mock.insurer_policies (
+    sale_id UUID PRIMARY KEY,
+    policy_number TEXT NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS endpoint0.lab_faults (
     event_id UUID PRIMARY KEY REFERENCES endpoint0.outbox(event_id),
     step VARCHAR(32) NOT NULL,

@@ -21,7 +21,9 @@ public class AwsS3Configuration {
     @Bean
     S3Client s3Client(@Value("${app.s3.region}") String region,
                       @Value("${app.s3.endpoint:}") String endpoint,
-                      @Value("${app.lab.purchases-enabled:false}") boolean localLab) {
+                      @Value("${app.lab.purchases-enabled:false}") boolean purchases) {
+        // LocalStack lab = purchases + explicit endpoint. On AWS the endpoint is blank and Pod Identity supplies credentials.
+        boolean localLab = purchases && !endpoint.isBlank();
         if (localLab) requireLocalEndpoint(endpoint);
         var builder = S3Client.builder()
                 .region(Region.of(region))
@@ -38,7 +40,8 @@ public class AwsS3Configuration {
     @Bean
     S3Presigner s3Presigner(@Value("${app.s3.region}") String region,
                             @Value("${app.s3.presign-endpoint:${app.s3.endpoint:}}") String endpoint,
-                            @Value("${app.lab.purchases-enabled:false}") boolean localLab) {
+                            @Value("${app.lab.purchases-enabled:false}") boolean purchases) {
+        boolean localLab = purchases && !endpoint.isBlank();
         if (localLab) requireLocalEndpoint(endpoint);
         var builder = S3Presigner.builder()
                 .region(Region.of(region))

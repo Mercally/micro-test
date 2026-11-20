@@ -1,9 +1,13 @@
 server:
   port: ${SERVER_PORT:8080}
+  # Scale-down (KEDA) or node removal (Karpenter): finish in-flight steps before exiting.
+  shutdown: graceful
 
 spring:
   application:
     name: docs-simulator
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/docs}
     username: ${DATABASE_USERNAME:docs}
@@ -38,6 +42,23 @@ app:
   simulator:
     failures-before-success: ${SIMULATOR_FAILURES_BEFORE_SUCCESS:0}
     failure-probability: ${SIMULATOR_FAILURE_PROBABILITY:0.2}
+  # Content Manager and insurer. Lab points both at the mocks Deployment (same image, MOCKS_ENABLED=true).
+  external:
+    cm-url: ${CM_URL:http://localhost:${server.port}/mock/cm}
+    insurer-url: ${INSURER_URL:http://localhost:${server.port}/mock/insurer}
+    connect-timeout-ms: ${EXTERNAL_CONNECT_TIMEOUT_MS:2000}
+    read-timeout-ms: ${EXTERNAL_READ_TIMEOUT_MS:5000}
+  mocks:
+    enabled: ${MOCKS_ENABLED:false}
+    failure-probability: ${MOCKS_FAILURE_PROBABILITY:0.02}
+    latency-ms: ${MOCKS_LATENCY_MS:0}
+  # Outbox publisher (worker Deployment, same image, WORKER_ENABLED=true).
+  worker:
+    enabled: ${WORKER_ENABLED:false}
+    queue-url: ${QUEUE_URL:}
+    region: ${AWS_REGION:us-east-1}
+    poll-ms: ${WORKER_POLL_MS:1000}
+    batch: ${WORKER_BATCH:20}
 
 logging:
   level:

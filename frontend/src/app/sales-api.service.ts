@@ -37,16 +37,20 @@ export class SalesApiService {
   }
 
   private headers(token: string): HttpHeaders {
-    return new HttpHeaders({
-      Authorization: `Bearer ${token.trim()}`,
-      'Content-Type': 'application/json'
-    });
+    const headers = new HttpHeaders({ 'Content-Type': 'application/json' });
+    // AWS lab API has no auth (N09); LocalStack still requires the practice JWT.
+    return token.trim() ? headers.set('Authorization', `Bearer ${token.trim()}`) : headers;
   }
 
   private apiUrl(baseUrl: string, resource: string): string {
     const value = baseUrl.trim().replace(/\/+$/, '');
     if (!value) {
       throw new Error('Configura la URL base de API Gateway.');
+    }
+
+    // AWS: CloudFront serves the SPA and routes /api/* to API Gateway on the same origin.
+    if (value.startsWith('/api/')) {
+      return `${value}${resource}`;
     }
 
     if (value.startsWith('/_aws/execute-api/')) {

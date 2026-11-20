@@ -1,0 +1,234 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 01 network. VPC in exactly two AZs: public (NAT only),
+  private app (EKS nodes/pods, NLB), isolated DB. Two AZs of subnets are required
+  by EKS and RDS and cost nothing; workloads start in AZ A only (N10).
+  Single NAT by design (N08): egress is NOT tolerant to loss of AZ A.
+
+Parameters:
+  Project:
+    Type: String
+    Default: micro-test
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  ClusterName:
+    Type: String
+    Default: micro-test
+    Description: EKS cluster name, used for subnet discovery tags (LBC, Karpenter).
+  VpcCidr:
+    Type: String
+    Default: 10.80.0.0/16
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: !Sub '${Project}-vpc' }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: !Sub '${Project}-igw' }]
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # Subnet layout (/16): public /24 x2, app /19 x2 (VPC CNI gives each pod a VPC IP), db /24 x2.
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 256, 8]]
+      Tags: [{ Key: Name, Value: !Sub '${Project}-public-a' }]
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 256, 8]]
+      Tags: [{ Key: Name, Value: !Sub '${Project}-public-b' }]
+
+  AppSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 8, 13]]
+      Tags:
+        - { Key: Name, Value: !Sub '${Project}-app-a' }
+        - { Key: kubernetes.io/role/internal-elb, Value: '1' }
+        - { Key: !Sub 'kubernetes.io/cluster/${ClusterName}', Value: shared }
+        - { Key: karpenter.sh/discovery, Value: !Ref ClusterName }
+
+  AppSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 8, 13]]
+      Tags:
+        - { Key: Name, Value: !Sub '${Project}-app-b' }
+        - { Key: kubernetes.io/role/internal-elb, Value: '1' }
+        - { Key: !Sub 'kubernetes.io/cluster/${ClusterName}', Value: shared }
+        - { Key: karpenter.sh/discovery, Value: !Ref ClusterName }
+
+  DbSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [192, !Cidr [!Ref VpcCidr, 256, 8]]
+      Tags: [{ Key: Name, Value: !Sub '${Project}-db-a' }]
+
+  DbSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [193, !Cidr [!Ref VpcCidr, 256, 8]]
+      Tags: [{ Key: Name, Value: !Sub '${Project}-db-b' }]
+
+  PublicRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: !Sub '${Project}-public' }]
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRoutes
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnetA, RouteTableId: !Ref PublicRoutes }
+
+  PublicSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnetB, RouteTableId: !Ref PublicRoutes }
+
+  # ponytail: one NAT in AZ A (~$33/mo + data). Upgrade path: NAT per AZ + per-AZ app route tables.
+  NatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags: [{ Key: Name, Value: !Sub '${Project}-nat' }]
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags: [{ Key: Name, Value: !Sub '${Project}-nat' }]
+
+  AppRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: !Sub '${Project}-app' }]
+
+  AppDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AppRoutes
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  AppSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref AppSubnetA, RouteTableId: !Ref AppRoutes }
+
+  AppSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref AppSubnetB, RouteTableId: !Ref AppRoutes }
+
+  # Isolated: no default route. Aurora needs no egress.
+  DbRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: !Sub '${Project}-db' }]
+
+  DbSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref DbSubnetA, RouteTableId: !Ref DbRoutes }
+
+  DbSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref DbSubnetB, RouteTableId: !Ref DbRoutes }
+
+  # Free; keeps S3 (documents, ECR layers) off the NAT bill.
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      RouteTableIds: [!Ref AppRoutes]
+
+  # Attached to EKS nodes (base node group + Karpenter EC2NodeClass). Pods share node SG.
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${Project} EKS nodes and pods'
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub '${Project}-app' }
+        - { Key: karpenter.sh/discovery, Value: !Ref ClusterName }
+
+  AppSecurityGroupSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AppSecurityGroup
+      SourceSecurityGroupId: !Ref AppSecurityGroup
+      IpProtocol: '-1'
+      Description: Node-to-node and pod-to-pod
+
+  # Ingress from the NLB to Istio gateway pods is added by 06-ingress (source = NLB security group).
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${Project} Aurora PostgreSQL'
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+          Description: PostgreSQL from EKS workloads
+      Tags: [{ Key: Name, Value: !Sub '${Project}-db' }]
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export: { Name: !Sub '${AWS::StackName}-VpcId' }
+  VpcCidr:
+    Value: !Ref VpcCidr
+    Export: { Name: !Sub '${AWS::StackName}-VpcCidr' }
+  PublicSubnetIds:
+    Value: !Join [',', [!Ref PublicSubnetA, !Ref PublicSubnetB]]
+    Export: { Name: !Sub '${AWS::StackName}-PublicSubnetIds' }
+  AppSubnetIds:
+    Value: !Join [',', [!Ref AppSubnetA, !Ref AppSubnetB]]
+    Export: { Name: !Sub '${AWS::StackName}-AppSubnetIds' }
+  DbSubnetIds:
+    Value: !Join [',', [!Ref DbSubnetA, !Ref DbSubnetB]]
+    Export: { Name: !Sub '${AWS::StackName}-DbSubnetIds' }
+  AppSecurityGroupId:
+    Value: !Ref AppSecurityGroup
+    Export: { Name: !Sub '${AWS::StackName}-AppSecurityGroupId' }
+  DbSecurityGroupId:
+    Value: !Ref DbSecurityGroup
+    Export: { Name: !Sub '${AWS::StackName}-DbSecurityGroupId' }

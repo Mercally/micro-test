@@ -65,7 +65,7 @@ public class PurchaseService {
                 """, eventId, generation, saleId);
         if (failure != null && !failure.isBlank()) {
             String[] parts = failure.split(":");
-            if (parts.length != 3 || !java.util.Set.of("document", "policy", "upload", "completePolicy", "release").contains(parts[0])
+            if (parts.length != 3 || !java.util.Set.of("document", "policy", "upload", "completePolicy", "release", "cm", "insurer").contains(parts[0])
                     || !java.util.Set.of("transient", "permanent").contains(parts[1])
                     || !parts[2].matches("[1-3]")) {
                 throw new PurchaseException(400, "INVALID_LAB_FAULT", "Ejemplo: document:transient:2 o upload:permanent:1");
@@ -95,6 +95,8 @@ public class PurchaseService {
                 SELECT event_id,generation,published_at,sqs_message_id,attempts,last_error
                 FROM endpoint0.outbox WHERE sale_id=? ORDER BY generation
                 """, saleId));
+        result.put("steps", db.queryForList(
+                "SELECT step,outcome,reference,completed_at FROM process.steps WHERE sale_id=? ORDER BY completed_at", saleId));
         var releases = db.queryForList("SELECT document_id,object_key,released_at FROM endpoint5.document_releases WHERE sale_id=?", saleId);
         if (!releases.isEmpty()) {
             result.put("document", releases.get(0));

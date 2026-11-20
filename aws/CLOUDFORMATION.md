@@ -1,5 +1,8 @@
 # CloudFormation: validar sin recursos y desplegar por etapas
 
+> **Orden y comandos reales de los stacks AWS:** [cloudformation/README.md](cloudformation/README.md).
+> Este documento conserva la validación offline y el procedimiento genérico de change sets.
+
 Estado revisado: **2026-11-05**. Ejecutar los bloques desde la raíz del repositorio
 en **Bash** (macOS, Linux o WSL). Detenerse ante cualquier error.
 

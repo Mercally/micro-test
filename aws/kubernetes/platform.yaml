@@ -1,0 +1,77 @@
+# Cluster platform objects (rendered by bootstrap.sh; placeholders come from CloudFormation outputs).
+# Karpenter capacity for workloads, mesh-wide mTLS, public gateway and its NLB binding.
+---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: workloads
+spec:
+  role: ${NODE_ROLE_NAME}
+  amiSelectorTerms:
+    - alias: al2023@latest
+  subnetSelectorTerms:
+    - id: ${WORKLOAD_SUBNET_ID}        # AZ A only (N10)
+  securityGroupSelectorTerms:
+    - id: ${CLUSTER_SG_ID}
+    - id: ${APP_SG_ID}
+  metadataOptions:
+    httpTokens: required
+    httpPutResponseHopLimit: 1         # pods use Pod Identity, never IMDS
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs: { volumeSize: 20Gi, volumeType: gp3, encrypted: true }
+---
+# App pods (api, worker, mocks) run only here: watching this pool grow is the lab.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: workloads
+spec:
+  template:
+    spec:
+      nodeClassRef: { group: karpenter.k8s.aws, kind: EC2NodeClass, name: workloads }
+      requirements:
+        - { key: kubernetes.io/arch, operator: In, values: [arm64] }
+        - { key: karpenter.sh/capacity-type, operator: In, values: [spot, on-demand] }
+        - { key: karpenter.k8s.aws/instance-family, operator: In, values: [t4g, c7g, m7g] }
+        - { key: karpenter.k8s.aws/instance-size, operator: In, values: [medium, large, xlarge] }
+      expireAfter: 168h
+  # Hard ceiling of the experiment: Karpenter never exceeds this capacity.
+  limits:
+    cpu: "${KARPENTER_CPU_LIMIT}"
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT
+---
+# NLB terminates TLS (06-ingress); gateway receives HTTP on service port 80 -> pod 8080.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: public
+  namespace: istio-ingress
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port: { number: 80, name: http, protocol: HTTP }
+      hosts: ["*"]   # Host differs between API Gateway and Step Functions; routing is by path
+---
+# AWS LBC registers gateway pod IPs into the NLB target group owned by CloudFormation.
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: istio-ingressgateway
+  namespace: istio-ingress
+spec:
+  serviceRef: { name: istio-ingressgateway, port: 80 }
+  targetGroupARN: ${TARGET_GROUP_ARN}
+  targetType: ip

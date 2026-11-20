@@ -1,5 +1,9 @@
 # Propuesta de arquitectura real de compras
 
+> **Histórico (2026-11-05).** Diseño anterior con Lambda authorizer, Lambda publisher,
+> EventBridge Pipe, RDS y HPA. Reemplazado por las decisiones N01–N22 de
+> [PLAN_AWS.md](PLAN_AWS.md). Arquitectura vigente: [README.md](README.md).
+
 Estado: diseño AWS para revisión. Laboratorio local actualizado el 2026-11-05:
 API autenticada y HTTP Tasks pasan por NLB → Istio; compra/PDF validados.
 Ver [evidencia local y límites](../localstack/VALIDATION.md).

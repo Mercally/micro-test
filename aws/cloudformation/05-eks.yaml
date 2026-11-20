@@ -1,0 +1,512 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 05 eks. Cluster (API auth, secrets encrypted with KMS, public endpoint
+  restricted by CIDR), On-Demand base node group in AZ A (N10), managed add-ons, Pod Identity
+  roles per workload, IAM + interruption queue for Karpenter. Helm/manifests are a separate step.
+
+Parameters:
+  Project:
+    Type: String
+    Default: micro-test
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  ClusterName:
+    Type: String
+    Default: micro-test
+    Description: Must match ClusterName used in 01-network (subnet discovery tags).
+  NetworkStack:
+    Type: String
+    Default: micro-test-network
+  SecurityStack:
+    Type: String
+    Default: micro-test-security
+  DataStack:
+    Type: String
+    Default: micro-test-data
+  MessagingStack:
+    Type: String
+    Default: micro-test-messaging
+  KubernetesVersion:
+    Type: String
+    Default: '1.35'
+    Description: 'Check: aws eks describe-cluster-versions --default-only --query "clusterVersions[].clusterVersion"'
+  AdminCidr:
+    Type: String
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+    Description: 'Your public IP for kubectl, e.g. 203.0.113.10/32 (curl -s https://checkip.amazonaws.com)'
+  NodeInstanceType:
+    Type: String
+    Default: t4g.medium
+    Description: Graviton (arm64). Base nodes run controllers, Istio and the critical path.
+  NodeCount:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 5
+  AppNamespace:
+    Type: String
+    Default: micro
+  LogRetentionDays:
+    Type: Number
+    Default: 7
+    AllowedValues: [1, 3, 5, 7, 14, 30]
+
+Resources:
+  # ---------- Control plane (~$0.10/h) ----------
+  ClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: eks.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonEKSClusterPolicy'
+
+  Cluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      Version: !Ref KubernetesVersion
+      RoleArn: !GetAtt ClusterRole.Arn
+      AccessConfig:
+        AuthenticationMode: API
+        # Whoever deploys this stack becomes cluster admin (lab). Add more via AWS::EKS::AccessEntry.
+        BootstrapClusterCreatorAdminPermissions: true
+      EncryptionConfig:
+        - Resources: [secrets]
+          Provider: { KeyArn: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' } }
+      ResourcesVpcConfig:
+        # Control plane ENIs need both AZs even though workloads run in AZ A only.
+        SubnetIds: !Split [',', { 'Fn::ImportValue': !Sub '${NetworkStack}-AppSubnetIds' }]
+        SecurityGroupIds: [{ 'Fn::ImportValue': !Sub '${NetworkStack}-AppSecurityGroupId' }]
+        EndpointPrivateAccess: true
+        EndpointPublicAccess: true
+        PublicAccessCidrs: [!Ref AdminCidr]
+      Tags:
+        - { Key: karpenter.sh/discovery, Value: !Ref ClusterName }
+
+  # ---------- Base nodes (On-Demand, AZ A) ----------
+  NodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      # Shared by the base node group and Karpenter nodes (one access entry, created by the node group).
+      # ponytail: VPC CNI uses the node role. Upgrade path: Pod Identity for aws-node.
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonEKSWorkerNodePolicy'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonEKS_CNI_Policy'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+
+  NodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        # Explicit SGs replace EKS defaults, so the cluster SG must be listed too.
+        SecurityGroupIds:
+          - !GetAtt Cluster.ClusterSecurityGroupId
+          - { 'Fn::ImportValue': !Sub '${NetworkStack}-AppSecurityGroupId' }
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1   # pods cannot reach IMDS; they use Pod Identity
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { VolumeSize: 20, VolumeType: gp3, Encrypted: true }
+        TagSpecifications:
+          - ResourceType: instance
+            Tags: [{ Key: Name, Value: !Sub '${Project}-base' }]
+
+  BaseNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref Cluster
+      NodegroupName: base
+      NodeRole: !GetAtt NodeRole.Arn
+      AmiType: AL2023_ARM_64_STANDARD
+      CapacityType: ON_DEMAND
+      InstanceTypes: [!Ref NodeInstanceType]
+      Subnets: [!Select [0, !Split [',', { 'Fn::ImportValue': !Sub '${NetworkStack}-AppSubnetIds' }]]]
+      LaunchTemplate: { Id: !Ref NodeLaunchTemplate, Version: !GetAtt NodeLaunchTemplate.LatestVersionNumber }
+      ScalingConfig: { MinSize: !Ref NodeCount, DesiredSize: !Ref NodeCount, MaxSize: !Ref NodeCount }
+      Labels: { role: base }
+
+  # ---------- Managed add-ons (versions: EKS default for the cluster version) ----------
+  VpcCniAddon:
+    Type: AWS::EKS::Addon
+    Properties: { ClusterName: !Ref Cluster, AddonName: vpc-cni, ResolveConflicts: OVERWRITE }
+
+  KubeProxyAddon:
+    Type: AWS::EKS::Addon
+    Properties: { ClusterName: !Ref Cluster, AddonName: kube-proxy, ResolveConflicts: OVERWRITE }
+
+  PodIdentityAgentAddon:
+    Type: AWS::EKS::Addon
+    Properties: { ClusterName: !Ref Cluster, AddonName: eks-pod-identity-agent, ResolveConflicts: OVERWRITE }
+
+  CoreDnsAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: BaseNodeGroup   # needs nodes to become ACTIVE
+    Properties: { ClusterName: !Ref Cluster, AddonName: coredns, ResolveConflicts: OVERWRITE }
+
+  # KEDA CPU fallback and kubectl top.
+  MetricsServerAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: BaseNodeGroup
+    Properties: { ClusterName: !Ref Cluster, AddonName: metrics-server, ResolveConflicts: OVERWRITE }
+
+  # ---------- Observability (N21): CloudWatch agent + Fluent Bit + Application Signals ----------
+  # Log groups created first with retention; otherwise the agent creates them with infinite retention.
+  ContainerInsightsApplicationLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub '/aws/containerinsights/${ClusterName}/application', RetentionInDays: !Ref LogRetentionDays }
+  ContainerInsightsDataplaneLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub '/aws/containerinsights/${ClusterName}/dataplane', RetentionInDays: !Ref LogRetentionDays }
+  ContainerInsightsHostLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub '/aws/containerinsights/${ClusterName}/host', RetentionInDays: !Ref LogRetentionDays }
+  ContainerInsightsPerformanceLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub '/aws/containerinsights/${ClusterName}/performance', RetentionInDays: !Ref LogRetentionDays }
+  ApplicationSignalsLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: /aws/application-signals/data, RetentionInDays: !Ref LogRetentionDays }
+
+  CloudWatchAgentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: pods.eks.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AWSXrayWriteOnlyAccess'
+
+  # Container Insights (pods/nodes), app logs (Fluent Bit) and Application Signals: the agent
+  # receives ADOT traces/metrics from pods annotated instrumentation.opentelemetry.io/inject-java.
+  CloudWatchObservabilityAddon:
+    Type: AWS::EKS::Addon
+    DependsOn:
+      - BaseNodeGroup
+      - PodIdentityAgentAddon
+      - ContainerInsightsApplicationLogs
+      - ContainerInsightsDataplaneLogs
+      - ContainerInsightsHostLogs
+      - ContainerInsightsPerformanceLogs
+      - ApplicationSignalsLogs
+    Properties:
+      ClusterName: !Ref Cluster
+      AddonName: amazon-cloudwatch-observability
+      ResolveConflicts: OVERWRITE
+      PodIdentityAssociations:
+        - { ServiceAccount: cloudwatch-agent, RoleArn: !GetAtt CloudWatchAgentRole.Arn }
+
+  # ---------- Pod Identity: one role per workload ----------
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: pods.eks.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: api
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub
+                  - '${Bucket}/tmp/*'
+                  - Bucket: { 'Fn::ImportValue': !Sub '${DataStack}-DocumentsBucketArn' }
+              # ListBucket makes HeadObject return 404 (not 403) for a missing key; app relies on it.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: { 'Fn::ImportValue': !Sub '${DataStack}-DocumentsBucketArn' }
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: { 'Fn::ImportValue': !Sub '${DataStack}-DbSecretArn' }
+              - Effect: Allow
+                Action: [kms:Decrypt, kms:GenerateDataKey]
+                Resource: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: pods.eks.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: worker
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # S3Storage runs HeadBucket at startup in every pod (shared image).
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: { 'Fn::ImportValue': !Sub '${DataStack}-DocumentsBucketArn' }
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: { 'Fn::ImportValue': !Sub '${MessagingStack}-QueueArn' }
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: { 'Fn::ImportValue': !Sub '${DataStack}-DbSecretArn' }
+              - Effect: Allow
+                Action: [kms:Decrypt, kms:GenerateDataKey]
+                Resource: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+
+  MocksRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: pods.eks.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: mocks
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # S3Storage runs HeadBucket at startup in every pod (shared image).
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: { 'Fn::ImportValue': !Sub '${DataStack}-DocumentsBucketArn' }
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: { 'Fn::ImportValue': !Sub '${DataStack}-DbSecretArn' }
+              - Effect: Allow
+                Action: [kms:Decrypt, kms:GenerateDataKey]
+                Resource: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+
+  # KEDA reads queue depth and (outbox scaler) the DB secret.
+  KedaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: pods.eks.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: keda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sqs:GetQueueAttributes
+                Resource: { 'Fn::ImportValue': !Sub '${MessagingStack}-QueueArn' }
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: { 'Fn::ImportValue': !Sub '${DataStack}-DbSecretArn' }
+              - Effect: Allow
+                Action: [kms:Decrypt, kms:GenerateDataKey]
+                Resource: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+
+  # AWS LBC only reconciles TargetGroupBinding (CloudFormation owns the NLB, stack 06).
+  LoadBalancerControllerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: pods.eks.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: target-group-binding
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticloadbalancing:Describe*   # read-only; TGB reconcile reads TG attributes too
+                  - ec2:DescribeInstances
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeAvailabilityZones
+                Resource: '*'
+              - Effect: Allow
+                Action: [elasticloadbalancing:RegisterTargets, elasticloadbalancing:DeregisterTargets]
+                Resource: !Sub 'arn:${AWS::Partition}:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:targetgroup/${Project}-*/*'
+
+  # ---------- Karpenter ----------
+  KarpenterInterruptionQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ClusterName}-karpenter'
+      MessageRetentionPeriod: 300
+      SqsManagedSseEnabled: true
+
+  KarpenterInterruptionQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref KarpenterInterruptionQueue]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: [events.amazonaws.com, sqs.amazonaws.com] }
+            Action: sqs:SendMessage
+            Resource: !GetAtt KarpenterInterruptionQueue.Arn
+          - Effect: Deny
+            Principal: '*'
+            Action: sqs:*
+            Resource: !GetAtt KarpenterInterruptionQueue.Arn
+            Condition: { Bool: { 'aws:SecureTransport': 'false' } }
+
+  SpotInterruptionRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern: { source: [aws.ec2], detail-type: [EC2 Spot Instance Interruption Warning] }
+      Targets: [{ Id: karpenter, Arn: !GetAtt KarpenterInterruptionQueue.Arn }]
+
+  RebalanceRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern: { source: [aws.ec2], detail-type: [EC2 Instance Rebalance Recommendation] }
+      Targets: [{ Id: karpenter, Arn: !GetAtt KarpenterInterruptionQueue.Arn }]
+
+  InstanceStateChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern: { source: [aws.ec2], detail-type: [EC2 Instance State-change Notification] }
+      Targets: [{ Id: karpenter, Arn: !GetAtt KarpenterInterruptionQueue.Arn }]
+
+  ScheduledChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern: { source: [aws.health], detail-type: [AWS Health Event] }
+      Targets: [{ Id: karpenter, Arn: !GetAtt KarpenterInterruptionQueue.Arn }]
+
+  KarpenterControllerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: pods.eks.amazonaws.com }
+            Action: [sts:AssumeRole, sts:TagSession]
+      Policies:
+        - PolicyName: karpenter
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Read
+                Effect: Allow
+                Action:
+                  - ec2:DescribeAvailabilityZones
+                  - ec2:DescribeImages
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceTypeOfferings
+                  - ec2:DescribeInstanceTypes
+                  - ec2:DescribeLaunchTemplates
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSpotPriceHistory
+                  - ec2:DescribeSubnets
+                  - pricing:GetProducts
+                  - ssm:GetParameter
+                Resource: '*'
+              - Sid: Provision
+                Effect: Allow
+                Action: [ec2:RunInstances, ec2:CreateFleet, ec2:CreateLaunchTemplate, ec2:CreateTags]
+                Resource: '*'
+              # Only instances/templates Karpenter created for this cluster (base node group excluded).
+              - Sid: Deprovision
+                Effect: Allow
+                Action: [ec2:TerminateInstances, ec2:DeleteLaunchTemplate]
+                Resource: '*'
+                Condition:
+                  StringEquals: { 'aws:ResourceTag/eks:eks-cluster-name': !Ref ClusterName }
+                  StringLike: { 'aws:ResourceTag/karpenter.sh/nodepool': '*' }
+              - Sid: PassNodeRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt NodeRole.Arn
+                Condition: { StringEquals: { 'iam:PassedToService': ec2.amazonaws.com } }
+              - Sid: InstanceProfiles
+                Effect: Allow
+                Action:
+                  - iam:CreateInstanceProfile
+                  - iam:TagInstanceProfile
+                  - iam:AddRoleToInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:GetInstanceProfile
+                  - iam:ListInstanceProfiles
+                Resource: '*'
+              - Sid: Cluster
+                Effect: Allow
+                Action: eks:DescribeCluster
+                Resource: !GetAtt Cluster.Arn
+              - Sid: Interruptions
+                Effect: Allow
+                Action: [sqs:DeleteMessage, sqs:GetQueueUrl, sqs:ReceiveMessage]
+                Resource: !GetAtt KarpenterInterruptionQueue.Arn
+
+  # ---------- Pod Identity associations (service accounts are created later by Helm/manifests) ----------
+  ApiAssociation:
+    Type: AWS::EKS::PodIdentityAssociation
+    DependsOn: PodIdentityAgentAddon
+    Properties: { ClusterName: !Ref Cluster, Namespace: !Ref AppNamespace, ServiceAccount: api, RoleArn: !GetAtt ApiRole.Arn }
+
+  WorkerAssociation:
+    Type: AWS::EKS::PodIdentityAssociation
+    DependsOn: PodIdentityAgentAddon
+    Properties: { ClusterName: !Ref Cluster, Namespace: !Ref AppNamespace, ServiceAccount: worker, RoleArn: !GetAtt WorkerRole.Arn }
+
+  MocksAssociation:
+    Type: AWS::EKS::PodIdentityAssociation
+    DependsOn: PodIdentityAgentAddon
+    Properties: { ClusterName: !Ref Cluster, Namespace: !Ref AppNamespace, ServiceAccount: mocks, RoleArn: !GetAtt MocksRole.Arn }
+
+  KedaAssociation:
+    Type: AWS::EKS::PodIdentityAssociation
+    DependsOn: PodIdentityAgentAddon
+    Properties: { ClusterName: !Ref Cluster, Namespace: keda, ServiceAccount: keda-operator, RoleArn: !GetAtt KedaRole.Arn }
+
+  LoadBalancerControllerAssociation:
+    Type: AWS::EKS::PodIdentityAssociation
+    DependsOn: PodIdentityAgentAddon
+    Properties: { ClusterName: !Ref Cluster, Namespace: kube-system, ServiceAccount: aws-load-balancer-controller, RoleArn: !GetAtt LoadBalancerControllerRole.Arn }
+
+  KarpenterAssociation:
+    Type: AWS::EKS::PodIdentityAssociation
+    DependsOn: PodIdentityAgentAddon
+    Properties: { ClusterName: !Ref Cluster, Namespace: kube-system, ServiceAccount: karpenter, RoleArn: !GetAtt KarpenterControllerRole.Arn }
+
+Outputs:
+  ClusterName:
+    Value: !Ref Cluster
+    Export: { Name: !Sub '${AWS::StackName}-ClusterName' }
+  ClusterEndpoint:
+    Value: !GetAtt Cluster.Endpoint
+  ClusterSecurityGroupId:
+    Value: !GetAtt Cluster.ClusterSecurityGroupId
+    Export: { Name: !Sub '${AWS::StackName}-ClusterSecurityGroupId' }
+  NodeRoleName:
+    Description: Karpenter EC2NodeClass spec.role
+    Value: !Ref NodeRole
+  KarpenterInterruptionQueueName:
+    Description: Karpenter Helm value settings.interruptionQueue
+    Value: !GetAtt KarpenterInterruptionQueue.QueueName

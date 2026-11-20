@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 03 data. Aurora PostgreSQL Serverless v2 (min 0 ACU, auto-pause)
+  with one writer in workload AZ, own master secret without rotation (N17), Data API;
+  S3 bucket for documents.
+
+Parameters:
+  Project:
+    Type: String
+    Default: micro-test
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  NetworkStack:
+    Type: String
+    Default: micro-test-network
+  SecurityStack:
+    Type: String
+    Default: micro-test-security
+  EngineVersion:
+    Type: String
+    Default: '16.6'
+    Description: >-
+      Must support 0 ACU (16.3+). Check: aws rds describe-db-engine-versions
+      --engine aurora-postgresql --query "DBEngineVersions[].EngineVersion"
+  MaxCapacity:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 64
+    Description: ACU ceiling. Part of the lab - the DB is one of the limits you measure.
+  SecondsUntilAutoPause:
+    Type: Number
+    Default: 600
+    MinValue: 300
+    MaxValue: 86400
+  DocumentRetentionDays:
+    Type: Number
+    Default: 30
+
+Resources:
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub '${Project} Aurora (isolated subnets, both AZs required by RDS)'
+      SubnetIds: !Split [',', { 'Fn::ImportValue': !Sub '${NetworkStack}-DbSubnetIds' }]
+
+  # Own secret WITHOUT rotation (decision N17): pods read it once at start; a rotating
+  # RDS-managed secret would break them after 7 days. Rotate manually if ever needed.
+  DbSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${Project}/aurora/master'
+      KmsKeyId: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"docs"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\:;+%?&=#`''{}[]()<> '
+
+  # Adds host/port/engine to the secret so it is a complete connection descriptor.
+  DbSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DbSecret
+      TargetId: !Ref DbCluster
+      TargetType: AWS::RDS::DBCluster
+
+  DbCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBClusterIdentifier: !Sub '${Project}-aurora'
+      Engine: aurora-postgresql
+      EngineVersion: !Ref EngineVersion
+      DatabaseName: docs
+      MasterUsername: !Sub '{{resolve:secretsmanager:${DbSecret}:SecretString:username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${DbSecret}:SecretString:password}}'
+      StorageEncrypted: true
+      KmsKeyId: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VpcSecurityGroupIds: [{ 'Fn::ImportValue': !Sub '${NetworkStack}-DbSecurityGroupId' }]
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0
+        MaxCapacity: !Ref MaxCapacity
+        SecondsUntilAutoPause: !Ref SecondsUntilAutoPause
+      # Data API: run SQL from the Mac (aws rds-data) without VPN/bastion.
+      EnableHttpEndpoint: true
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+      CopyTagsToSnapshot: true
+
+  # ponytail: single writer, no reader. Add a second db.serverless instance in AZ B for failover.
+  DbWriter:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub '${Project}-aurora-writer'
+      DBClusterIdentifier: !Ref DbCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      AvailabilityZone: !Select [0, !GetAZs '']
+      PubliclyAccessible: false
+
+  DocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Project}-documents-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+            BucketKeyEnabled: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-lab-documents
+            Status: Enabled
+            ExpirationInDays: !Ref DocumentRetentionDays
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
+
+  DocumentsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DocumentsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt DocumentsBucket.Arn
+              - !Sub '${DocumentsBucket.Arn}/*'
+            Condition: { Bool: { 'aws:SecureTransport': 'false' } }
+
+Outputs:
+  DbClusterArn:
+    Value: !GetAtt DbCluster.DBClusterArn
+    Export: { Name: !Sub '${AWS::StackName}-DbClusterArn' }
+  DbEndpoint:
+    Value: !GetAtt DbCluster.Endpoint.Address
+    Export: { Name: !Sub '${AWS::StackName}-DbEndpoint' }
+  DbPort:
+    Value: !GetAtt DbCluster.Endpoint.Port
+    Export: { Name: !Sub '${AWS::StackName}-DbPort' }
+  DbSecretArn:
+    Value: !Ref DbSecret
+    Export: { Name: !Sub '${AWS::StackName}-DbSecretArn' }
+  DocumentsBucketName:
+    Value: !Ref DocumentsBucket
+    Export: { Name: !Sub '${AWS::StackName}-DocumentsBucketName' }
+  DocumentsBucketArn:
+    Value: !GetAtt DocumentsBucket.Arn
+    Export: { Name: !Sub '${AWS::StackName}-DocumentsBucketArn' }

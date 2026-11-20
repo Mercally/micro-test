@@ -43,11 +43,11 @@ const API_URL_KEY = 'micro-test.api-url';
           <label class="field">
             <span>URL base de API Gateway</span>
             <input [(ngModel)]="apiUrl" (change)="saveApiUrl()"
-              placeholder="http://127.0.0.1:4566/_aws/execute-api/<api-id>/lab">
-            <small>Copia <code>&#64;baseUrl</code> desde <code>localstack/.state/business/purchase.http</code>.</small>
+              placeholder="/api/v1 (AWS) o http://127.0.0.1:4566/_aws/execute-api/<api-id>/lab">
+            <small>AWS: <code>/api/v1</code>. LocalStack: copia <code>&#64;baseUrl</code> desde <code>localstack/.state/business/purchase.http</code>.</small>
           </label>
           <label class="field">
-            <span>JWT de práctica</span>
+            <span>JWT de práctica (solo LocalStack)</span>
             <input [(ngModel)]="token" type="password" autocomplete="off"
               placeholder="Pega el valor de @token, sin la palabra Bearer">
             <small>Se conserva solo en memoria; no se guarda en el navegador.</small>
@@ -153,7 +153,8 @@ const API_URL_KEY = 'micro-test.api-url';
   styleUrl: './app.component.css'
 })
 export class AppComponent {
-  apiUrl = localStorage.getItem(API_URL_KEY) ?? '';
+  apiUrl = localStorage.getItem(API_URL_KEY)
+    ?? (['127.0.0.1', 'localhost'].includes(window.location.hostname) ? '' : '/api/v1');
   token = '';
   sales: SaleRow[] = this.readSales();
   creating = false;
@@ -171,7 +172,8 @@ export class AppComponent {
   constructor(private readonly api: SalesApiService) {}
 
   get credentialsReady(): boolean {
-    return Boolean(this.apiUrl.trim() && this.token.trim());
+    const url = this.apiUrl.trim();
+    return Boolean(url && (this.token.trim() || url.startsWith('/api/')));
   }
 
   saveApiUrl(): void {

@@ -54,23 +54,29 @@ Conservar funcionando el laboratorio durante el trabajo AWS.
 
 ## 3. Requisitos ya confirmados
 
+> **Revisión 2026-11-19.** Las decisiones N01–N09 (sección 4) reemplazan en este
+> documento: EventBridge Pipe → Lambda consumidora; Lambda publisher → worker
+> outbox en EKS; RDS → Aurora PostgreSQL; HPA → KEDA. El anexo conserva el
+> prompt original sin reescribir.
+
 - CloudFormation modular bajo `aws/`; exactamente **dos AZ** para las subredes
   y workloads administrados. No volver a preguntar por una tercera AZ.
-- Entrada: cliente → API Gateway público autenticado → VPC Link → NLB interno
-  → Istio → aceptación → transacción PostgreSQL de venta + outbox → respuesta 202.
-- Procesamiento: outbox → Lambda publisher → SQS → EventBridge Pipe →
-  Step Functions Standard → HTTP Tasks privadas → mismo NLB → Istio → micros
-  → PDF en S3.
-- Step Functions no llama micros mediante Lambda ni API Gateway. Mantener Pipe;
-  no introducir dispatcher ni Event Bus. Identidad de workflow distinta de usuario.
+- Entrada: cliente → API Gateway público → VPC Link → NLB interno
+  → Istio → aceptación → transacción Aurora PostgreSQL de venta + outbox → 202.
+- Procesamiento: outbox → worker publisher (EKS) → SQS (+DLQ) → Lambda
+  consumidora → Step Functions Standard → HTTP Tasks privadas → mismo NLB →
+  Istio → API → documento en S3. Paso 1 → 2 → 3, tres reintentos por paso.
+- Step Functions no llama micros mediante Lambda ni API Gateway. La Lambda solo
+  inicia la ejecución; la SFN cierra el mensaje SQS (patrón lease, N02).
+  Identidad de workflow distinta de usuario.
 - NLB interno compartido; no exponerlo públicamente. NAT, si se elige, solo para
   egreso. Ownership único del NLB, con preferencia por CloudFormation + TargetGroupBinding.
 - TLS de entrada, mTLS STRICT interno, autorización efectiva, NetworkPolicy,
   secretos gestionados e IAM mínimo. No trasladar valores exclusivos del laboratorio.
 - Aceptación después del commit; idempotencia durable y entrega al menos una vez.
   No prometer exactly-once de extremo a extremo. PDF no viaja en payload del workflow.
-- Base On-Demand para controladores y recorrido crítico; HPA CPU/RAM y Karpenter
-  con responsabilidades separadas. Distribución del recorrido crítico entre ambas AZ.
+- Base On-Demand para controladores y recorrido crítico; KEDA (pods) y Karpenter
+  (nodos) con responsabilidades separadas. Distribución del recorrido crítico entre ambas AZ.
 - Build, publicación, bootstrap Kubernetes y migraciones son pasos explícitos,
   separados de CloudFormation.
 - Objetivos: costo controlado, aceptación rápida, procesamiento asíncrono confiable
@@ -86,17 +92,47 @@ que todavía no hay respuesta; no implica aceptar un valor por defecto.
 
 | ID | Pregunta / decisión | Respuesta confirmada | Cuándo se necesita | Fecha |
 |---|---|---|---|---|
-| D01 | ¿Entorno de pruebas, producción o ambos? | PENDIENTE | Perfil inicial y separación de entornos | — |
-| D02 | ¿Presupuesto máximo mensual y moneda? | PENDIENTE | Comparar costos y tamaños | — |
-| D03 | ¿Región AWS destino? | PENDIENTE; `us-east-1` es solo referencia de estimación | Compatibilidad regional y estimación | — |
+| D01 | ¿Entorno de pruebas, producción o ambos? | Laboratorio semi-productivo: simular fallos/caídas, detener, escalar y medir límites | Perfil inicial y separación de entornos | 2026-11-19 |
+| D02 | ¿Presupuesto máximo mensual y moneda? | Sin cifra: lo menos costoso posible aprovisionando todos los componentes | Comparar costos y tamaños | 2026-11-19 |
+| D03 | ¿Región AWS destino? | `us-east-1` | Compatibilidad regional y estimación | 2026-11-19 |
 | D04 | ¿Cuenta destino y perfil/rol de despliegue? | PENDIENTE; no guardar credenciales | Antes de operaciones AWS; cuenta puede derivarse con pseudoparámetros al generar YAML | — |
-| D05 | ¿Dominio disponible, proveedor DNS y quién puede gestionar registros? | PENDIENTE | DNS, certificados y HTTP Tasks privadas | — |
-| D06 | ¿Proveedor de identidad de usuarios, issuer y audience? | PENDIENTE | Autenticación API y permisos de usuario | — |
+| D05 | ¿Dominio disponible, proveedor DNS y quién puede gestionar registros? | `mercally.com` en Hostinger (sin CAA); delegar `aws.mercally.com` a Route 53 (N16) | DNS, certificados y HTTP Tasks privadas | 2026-11-19 |
+| D06 | ¿Proveedor de identidad de usuarios, issuer y audience? | Sin autenticación por ahora; si resulta obligatoria, Lambda authorizer en API Gateway. Mitigar con throttling de stage | Autenticación API y permisos de usuario | 2026-11-19 |
 | D07 | ¿Identidad/credencial del workflow y responsable de su rotación? | PENDIENTE | Connection privada y autorización interna | — |
-| D08 | ¿Compras promedio, pico y simultaneidad esperados? | PENDIENTE | Capacidad, concurrencia y costos | — |
+| D08 | ¿Compras promedio, pico y simultaneidad esperados? | Sin cifra: arrancar mínimo y cargar SQS/outbox progresivamente hasta encontrar el límite | Capacidad, concurrencia y costos | 2026-11-19 |
 | D09 | ¿Duración máxima de cada operación y latencia objetivo de aceptación/finalización? | PENDIENTE | Contratos HTTP, timeouts y escalado | — |
 | D10 | ¿Tiempo máximo de recuperación (RTO) y pérdida de datos tolerable (RPO)? | PENDIENTE | Perfil RDS, backups y recuperación | — |
 | D11 | ¿Desde dónde se administrará EKS: laptop, VPN, runner u otra red? | PENDIENTE | Acceso reproducible al API privado | — |
+
+### Decisiones 2026-11-19 (reemplazan diseño anterior donde se indica)
+
+| ID | Decisión | Reemplaza |
+|---|---|---|
+| N01 | Lambda consumidora de SQS (ESM, batch 1, `MaximumConcurrency` como control de admisión) inicia Step Functions | EventBridge Pipe |
+| N02 | Patrón lease: Lambda devuelve `batchItemFailures` tras `StartExecution` (el ESM no borra); ejecución nombrada `messageId-receiveCount`; SFN hace `sqs:deleteMessage` al éxito y `changeMessageVisibility` en Catch; visibility timeout > timeout SFN; `maxReceiveCount` → DLQ. Hasta 3 reintentos/paso × N entregas | DLQ solo por fallo de Lambda |
+| N03 | Aurora PostgreSQL Serverless v2, mínimo 0 ACU (auto-pausa) | RDS PostgreSQL Multi-AZ |
+| N04 | KEDA escala pods (SQS/outbox); Karpenter escala nodos | HPA CPU/RAM |
+| N05 | mTLS STRICT con CA de istiod. KMS solo cifrado en reposo (Aurora, S3, SQS, secrets EKS). Sin ACM Private CA | KMS para mTLS |
+| N06 | Outbox publisher = worker Spring en la misma imagen, Deployment aparte activado por variable de entorno | Lambda publisher |
+| N07 | TLS público: certificado ACM en listener TLS del NLB interno con dominio del usuario; NLB → Istio gateway | Certificado gestionado en Istio |
+| N08 | Costo mínimo: un NAT (no tolera caída de AZ), nodos Graviton, Karpenter Spot, sin VPC interface endpoints (NAT más barato), S3 gateway endpoint | — |
+| N09 | API pública sin autenticación inicial; rutas `/internal/*` nunca expuestas en API Gateway | JWT authorizer obligatorio |
+| N10 | Subredes en dos AZ (obligatorio para EKS y RDS, sin costo); workloads (nodos, Karpenter, Aurora writer, NLB) solo en AZ A al inicio para evitar transferencia inter-AZ. Ampliar a AZ B por parámetro | Workloads distribuidos en dos AZ |
+| N11 | ECR ya existe en la cuenta del usuario: sin stack registry; imagen como parámetro. Lambda consumidora inline en plantilla, sin bucket de artefactos | Stack ECR + bucket artefactos |
+| N13 | Flujo de 3 pasos idempotentes según diagrama del usuario: (1) documento → S3 temporal, (2) subida a CM, (3) emisión con Aseguradora con acuse. Cada paso consulta estado, reconcilia con el externo y solo entonces actúa. 3 intentos por paso; liberar mensaje para reintento global; 3 entregas → DLQ. Borrado del archivo temporal tras `DeleteMessage`. Código: `ProcessService`, `/api/v1/internal/purchases/{id}/steps/*`, `aws/stepfunctions/purchase.asl.json` | Modelo claim/owner (bug: reentrega borraba mensaje sin procesar) |
+| N14 | CM y Aseguradora simulados por `ExternalMocksController` (misma imagen, `MOCKS_ENABLED`), fallos raros configurables: caída y acuse perdido | — |
+| N15 | DLQ: log + alarma CloudWatch (más económico). SNS a correo posterior | Lambda sobre DLQ |
+| N16 | DNS: `mercally.com` sigue en Hostinger; subdominio `aws.mercally.com` delegado a zona pública Route 53 (`00-dns.yaml`) con 4 NS manuales. Host interno `api-internal.aws.mercally.com`, certificado ACM con validación DNS automática. Guía: `aws/DNS.md` | Comprar dominio nuevo |
+| N17 | Secreto propio de Aurora (`micro-test/aurora/master`) **sin rotación**, cifrado con KMS; los pods lo leen al arrancar | Secreto gestionado por RDS con rotación cada 7 días; ESO y AWS JDBC Wrapper descartados |
+| N18 | TLS termina en el NLB (listener 443, ACM); NLB → Istio gateway HTTP 8080, health 15021; solo VPC Link y Resource Gateway (por SG) llegan al NLB y solo el NLB al gateway | Regla 8443 abierta a toda la VPC |
+| N19 | CloudFront sirve Angular (S3 privado, OAC, SSE-S3) y enruta `/api/*` al HTTP API: mismo origen, sin CORS. Frontend acepta base `/api/v1` y JWT opcional fuera de LocalStack | CloudFront y API en orígenes separados con CORS |
+| N20 | Bootstrap con `aws/kubernetes/bootstrap.sh` idempotente: valores desde Outputs CFN, secretos desde AWS por stdin, kubeconfig aislado. Controladores en nodos base; api/worker/mocks solo en NodePool Karpenter `workloads` (arm64, Spot/On-Demand, tope CPU). KEDA escala solo api (SQS + CPU); worker y mocks fijos (un scaler sobre Aurora impediría su auto-pausa). `/internal/*` exige `X-Workflow-Key` (AuthorizationPolicy DENY) — cierra D07. Istio sin reintentos en el VirtualService | HPA CPU/RAM; NetworkPolicy (pendiente) |
+| N21 | Observabilidad: add-on `amazon-cloudwatch-observability` (Container Insights, Fluent Bit, Application Signals) con Pod Identity y log groups con retención (05); agente ADOT inyectado por anotación, sin agente en la imagen; dashboard `micro-test-lab` y activación Application Signals (08). Guía: `aws/diagrams/OBSERVABILIDAD.md` | Agente OTel embebido sin collector |
+| N22 | Sincronización (corrige N01/N02): la Lambda espera su ejecución (timeout 330 s), así `MaxConcurrency` = ejecuciones activas. `API_MAX_REPLICAS` = ceil(N/8) derivado en bootstrap; sin trigger CPU en KEDA; apagado ordenado de Spring. Guía: `aws/diagrams/ESCALADO.md` | Lambda que solo arrancaba la ejecución (ESM no limitaba ejecuciones); KEDA independiente de la admisión |
+| N12 | NLB interno se mantiene: puerta estable para VPC Link y Resource Gateway, y soporte del certificado ACM. Istio balancea L7 dentro del cluster | — |
+
+Pruebas AWS pendientes derivadas: verificar si el ESM reduce concurrencia ante
+`batchItemFailures`. Bug de re-claim resuelto por N13 (`ProcessIntegrationTest` 7/7, 2026-11-19).
 
 Cuenta, nombres, dominios y tamaños se parametrizarán donde corresponda. No hacen
 falta claves AWS para escribir YAML o ejecutar lint. La falta de un valor que se
@@ -129,13 +165,13 @@ despliegue. Ajustar dependencias al definir contratos entre stacks.
 | E00 | Registrar contexto, prompt y guía de validación | Documentos enlazados y límites explícitos | COMPLETO |
 | E01 | Resolver decisiones iniciales y estimar costo mensual por componente | Decisiones registradas; supuestos, fuentes y pendientes visibles | PENDIENTE |
 | E02 | Definir módulos, parámetros, Outputs y orden | Grafo sin ciclos; ninguna dependencia futura requerida | PENDIENTE |
-| E03 | Red en dos AZ: VPC, subredes, rutas, SG, endpoints/egreso | YAML y ejemplos parametrizados; lint y contratos revisados | PENDIENTE |
-| E04 | ECR y bucket de artefactos; build y publicación reproducibles | Plantillas y scripts listos; publicación AWS separada | PENDIENTE |
-| E05 | EKS, acceso administrativo, IAM y capacidad base | Plantillas y acceso reproducibles; versiones fijadas | PENDIENTE |
-| E06 | RDS privado, secretos y S3 de documentos | Persistencia, backups, restauración y eliminación documentados | PENDIENTE |
-| E07 | NLB y conectividad privada de HTTP Tasks | Recursos, DNS/TLS, identidad y ownership definidos | PENDIENTE |
-| E08 | SQS/DLQ, ASL, Pipe, publisher y Scheduler | Artefactos e IAM listos; triggers inicialmente detenidos | PENDIENTE |
-| E09 | Bootstrap Kubernetes, servicios y migraciones | Helm/manifiestos renderizados; TLS, políticas, HPA y Karpenter preparados | PENDIENTE |
+| E03 | Red en dos AZ: VPC, subredes, rutas, SG, endpoints/egreso | YAML y ejemplos parametrizados; lint y contratos revisados | EN CURSO: 01-network.yaml listo, lint OK |
+| E04 | ECR y bucket de artefactos; build y publicación reproducibles | Plantillas y scripts listos; publicación AWS separada | Sin stack (N11); build/push a ECR existente PENDIENTE |
+| E05 | EKS, acceso administrativo, IAM y capacidad base | Plantillas y acceso reproducibles; versiones fijadas | EN CURSO: 05-eks listo (lint OK). Acceso: endpoint público por `AdminCidr` (D11) |
+| E06 | Aurora privado, secretos y S3 de documentos | Persistencia, backups, restauración y eliminación documentados | EN CURSO: 02-security y 03-data listos, lint OK |
+| E07 | NLB y conectividad privada de HTTP Tasks | Recursos, DNS/TLS, identidad y ownership definidos | EN CURSO: 06-ingress listo (lint OK); conectividad Step Functions → Resource Gateway por verificar en AWS |
+| E08 | SQS/DLQ, ASL, Lambda consumidora, worker outbox | Artefactos e IAM listos; triggers inicialmente detenidos | EN CURSO: 04-messaging listo (lint + test Lambda); validación ASL en AWS PENDIENTE |
+| E09 | Bootstrap Kubernetes, servicios y migraciones | Helm/manifiestos renderizados; TLS, políticas, HPA y Karpenter preparados | EN CURSO: `aws/kubernetes/` (bootstrap.sh, platform.yaml, app.yaml) renderiza y parsea offline; ejecución en EKS PENDIENTE. Versiones de charts por verificar |
 | E10 | API Gateway autenticado y VPC Link | Contratos públicos y autorizaciones definidos | PENDIENTE |
 | E11 | Consolidar validación offline y manual de operación | Lint, ASL, renderizados y pruebas relevantes; comandos exactos en la guía | PENDIENTE |
 | E12 | Usuario valida/revisa change sets y despliega AWS por etapas | Dependencias reales disponibles, resultados registrados | PENDIENTE |
@@ -152,6 +188,14 @@ nombres de archivos ficticios. El orden de ejecución se mantendrá sincronizado
 
 | Orden | Archivo real | Stack / entorno | Depende de | Parámetros de entrada | Outputs consumidos | Validación offline | Validación/despliegue AWS |
 |---|---|---|---|---|---|---|---|
+| 00 | `aws/cloudformation/00-dns.yaml` | `micro-test-dns` | — (luego 4 NS manuales en Hostinger, `aws/DNS.md`) | `ZoneName` = `aws.mercally.com` | — (exporta HostedZoneId, ZoneName; output NameServers) | cfn-lint 2026-11-19: 0 errores | PENDIENTE |
+| 01 | `aws/cloudformation/01-network.yaml` | `micro-test-network` | — | `Project`, `ClusterName`, `VpcCidr` (10.80.0.0/16) | — (exporta VpcId, VpcCidr, Public/App/DbSubnetIds, App/DbSecurityGroupId) | cfn-lint 2026-11-19: 0 errores | PENDIENTE |
+| 04 | `aws/cloudformation/04-messaging.yaml` | `micro-test-messaging` | 02 (06 ingress para `ResourceConfigurationArn`) | `ApiBaseUrl`, `WorkflowApiKey` (NoEcho), `ResourceConfigurationArn` (vacío hasta 06), `MaxReceiveCount` 3, `ReleaseDelaySeconds` 30, `MaxConcurrency` 2, `ConsumerEnabled` | DataKeyArn (exporta QueueUrl/Arn/Name) | cfn-lint 2026-11-19: 0 errores; `aws/tests/test_consumer.py` 3/3 | PENDIENTE |
+| 05 | `aws/cloudformation/05-eks.yaml` | `micro-test-eks` | 01, 02, 03, 04 | `AdminCidr` (obligatorio), `KubernetesVersion` 1.35 (verificar), `NodeInstanceType` t4g.medium, `NodeCount` 2, `AppNamespace` micro | AppSubnetIds, AppSecurityGroupId, DataKeyArn, DocumentsBucketArn, DbSecretArn, QueueArn (exporta ClusterName, ClusterSecurityGroupId) | cfn-lint 2026-11-19: 0 errores | PENDIENTE |
+| 06 | `aws/cloudformation/06-ingress.yaml` | `micro-test-ingress` | 00 (delegación verificada), 01 | `ApiHostLabel` api-internal, `CorsAllowOrigin` *, throttling 10/20 | HostedZoneId, ZoneName, VpcId, AppSubnetIds, AppSecurityGroupId (exporta IstioTargetGroupArn; outputs ApiBaseUrl, ResourceConfigurationArn para 04) | cfn-lint 2026-11-19: 0 errores | PENDIENTE |
+| 07 | `aws/cloudformation/07-frontend.yaml` | `micro-test-frontend` | 06 | `IngressStack` | HttpApiId | cfn-lint 2026-11-19: 0 errores; `npm run build` OK | PENDIENTE |
+| 02 | `aws/cloudformation/02-security.yaml` | `micro-test-security` | — | `Project` | — (exporta DataKeyArn) | cfn-lint 2026-11-19: 0 errores | PENDIENTE |
+| 03 | `aws/cloudformation/03-data.yaml` | `micro-test-data` | 01, 02 | `EngineVersion` (16.6, verificar), `MaxCapacity` (4 ACU), `SecondsUntilAutoPause`, `DocumentRetentionDays` | DbSubnetIds, DbSecurityGroupId, DataKeyArn | cfn-lint 2026-11-19: 0 errores | PENDIENTE |
 
 ### Registro de evidencia AWS
 
@@ -194,8 +238,9 @@ CloudFormation, parámetros, artefactos, scripts, Helm/manifiestos y pruebas.
 Registra rutas reales, dependencias, Parameters/Outputs y resultados. Mantén
 aws/CLOUDFORMATION.md con el orden exacto y los comandos que ejecutaré en AWS.
 
-Exactamente dos AZ. Mantén NLB interno, Istio, Lambda publisher, EventBridge Pipe
-y Step Functions Standard con HTTP Tasks privadas. No sustituyas esa arquitectura
+Exactamente dos AZ. Mantén NLB interno, Istio, worker outbox publisher, SQS+DLQ,
+Lambda consumidora con patrón lease (N02), Aurora PostgreSQL, KEDA, Karpenter y
+Step Functions Standard con HTTP Tasks privadas. No sustituyas esa arquitectura
 por diseños anteriores ni copies valores exclusivos de LocalStack.
 
 Separar generación, lint offline, validación AWS, change sets, despliegue y pruebas
@@ -215,6 +260,11 @@ próxima acción en aws/PLAN_AWS.md. Resume qué cambió y qué falta.
 | 2026-11-05 | Lint de nueve plantillas locales: cero errores y diez warnings | Detalle y comandos en CLOUDFORMATION.md; no se ejecutó AWS |
 | 2026-11-05 | Guía de validación/change sets/ejecución manual; requisito de dos AZ reflejado en documentación | Orden AWS todavía propuesto |
 | 2026-11-05 | Creación de este documento vivo a petición del usuario | Próximo paso: registrar respuestas iniciales |
+| 2026-11-19 | Respuestas D01–D03, D05, D06, D08; decisiones N01–N09 (Lambda consumidora, lease SQS, Aurora, KEDA, worker outbox, istiod mTLS) | Inicio stack 01 network |
+| 2026-11-19 | N13–N15: pasos idempotentes con reconciliación, mocks CM/Aseguradora, worker outbox Spring, ASL AWS, DLQ → CloudWatch | `mvn test` con PostgreSQL efímero: Process 7/7, Purchase 9/9; ASL sin validar en AWS |
+| 2026-11-19 | Validación Kubernetes con kind (`aws/kubernetes/validate.sh`) | 21 objetos aceptados en dry-run servidor (K8s 1.37) con CRDs de LBC 1.14.0, Karpenter 1.8.1, Istio 1.28.0, KEDA 2.18.0; prueba negativa rechazada; flags Helm verificados. Compatibilidad con EKS 1.35 sigue por verificar |
+| 2026-11-19 | N21–N22: observabilidad CloudWatch, Lambda que espera su ejecución, réplicas derivadas de MaxConcurrency | cfn-lint 0 errores; test_consumer 4/4; dashboard JSON válido |
+| 2026-11-19 | Pruebas del worker outbox (`OutboxPublisherIntegrationTest`) | 5/5 con PostgreSQL efímero y SQS falso; mutación sin `SKIP LOCKED` detectada (`duplicate send`) |
 
 ## Anexo — prompt base original
 

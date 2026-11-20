@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 02 security. One customer managed KMS key for data at rest
+  (Aurora, Aurora master secret, S3 documents, SQS, EKS secrets). mTLS is istiod, not KMS (N05).
+
+Parameters:
+  Project:
+    Type: String
+    Default: micro-test
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+
+Resources:
+  # ponytail: single key (~$1/mo). Split per service if blast radius or separate admins matter.
+  DataKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub '${Project} data at rest'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Delegates access control to IAM policies of each component role.
+          - Sid: AccountAdmin
+            Effect: Allow
+            Principal: { AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root' }
+            Action: 'kms:*'
+            Resource: '*'
+
+  DataKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${Project}-data'
+      TargetKeyId: !Ref DataKey
+
+Outputs:
+  DataKeyArn:
+    Value: !GetAtt DataKey.Arn
+    Export: { Name: !Sub '${AWS::StackName}-DataKeyArn' }

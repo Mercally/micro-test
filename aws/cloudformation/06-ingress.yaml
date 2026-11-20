@@ -1,0 +1,281 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 06 ingress. Internal NLB (TLS 443, public ACM certificate for
+  api-internal.<zone>) in front of the Istio ingress gateway; public HTTP API (no auth, throttled)
+  via VPC Link with public routes only; VPC Lattice Resource Gateway + Resource Configuration so
+  Step Functions HTTP Tasks reach the same NLB privately.
+
+Parameters:
+  Project:
+    Type: String
+    Default: micro-test
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  DnsStack:
+    Type: String
+    Default: micro-test-dns
+  NetworkStack:
+    Type: String
+    Default: micro-test-network
+  ApiHostLabel:
+    Type: String
+    Default: api-internal
+    Description: Internal API host = <label>.<delegated zone>. Must match ApiBaseUrl in 04-messaging.
+  CorsAllowOrigin:
+    Type: String
+    Default: '*'
+    Description: Browser origin allowed to call the public API (CloudFront URL once 07 exists).
+  ThrottlingRateLimit:
+    Type: Number
+    Default: 10
+    Description: Requests/second for the unauthenticated public API (N09 cost guard).
+  ThrottlingBurstLimit:
+    Type: Number
+    Default: 20
+  LogRetentionDays:
+    Type: Number
+    Default: 7
+    AllowedValues: [1, 3, 5, 7, 14, 30]
+
+Resources:
+  # ---------- Certificate + DNS (zone delegated from Hostinger, aws/DNS.md) ----------
+  # Stack waits here until ACM validates through Route 53: delegation must already work.
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Sub
+        - '${ApiHostLabel}.${Zone}'
+        - Zone: { 'Fn::ImportValue': !Sub '${DnsStack}-ZoneName' }
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub
+            - '${ApiHostLabel}.${Zone}'
+            - Zone: { 'Fn::ImportValue': !Sub '${DnsStack}-ZoneName' }
+          HostedZoneId: { 'Fn::ImportValue': !Sub '${DnsStack}-HostedZoneId' }
+
+  # Public record pointing to private NLB IPs: resolvable, not reachable from the Internet.
+  ApiInternalRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: { 'Fn::ImportValue': !Sub '${DnsStack}-HostedZoneId' }
+      Name: !Sub
+        - '${ApiHostLabel}.${Zone}'
+        - Zone: { 'Fn::ImportValue': !Sub '${DnsStack}-ZoneName' }
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Nlb.DNSName
+        HostedZoneId: !GetAtt Nlb.CanonicalHostedZoneID
+
+  # ---------- Security groups: only VPC Link and Resource Gateway reach the NLB ----------
+  VpcLinkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${Project} API Gateway VPC Link'
+      VpcId: { 'Fn::ImportValue': !Sub '${NetworkStack}-VpcId' }
+      Tags: [{ Key: Name, Value: !Sub '${Project}-vpclink' }]
+
+  ResourceGatewaySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${Project} VPC Lattice resource gateway (Step Functions)'
+      VpcId: { 'Fn::ImportValue': !Sub '${NetworkStack}-VpcId' }
+      Tags: [{ Key: Name, Value: !Sub '${Project}-resource-gateway' }]
+
+  NlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${Project} internal NLB'
+      VpcId: { 'Fn::ImportValue': !Sub '${NetworkStack}-VpcId' }
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref VpcLinkSecurityGroup
+          Description: API Gateway VPC Link
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ResourceGatewaySecurityGroup
+          Description: Step Functions via VPC Lattice
+      Tags: [{ Key: Name, Value: !Sub '${Project}-nlb' }]
+
+  AppFromNlbTraffic:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: { 'Fn::ImportValue': !Sub '${NetworkStack}-AppSecurityGroupId' }
+      SourceSecurityGroupId: !Ref NlbSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      Description: NLB to Istio ingress gateway (HTTP after TLS termination)
+
+  AppFromNlbHealth:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: { 'Fn::ImportValue': !Sub '${NetworkStack}-AppSecurityGroupId' }
+      SourceSecurityGroupId: !Ref NlbSecurityGroup
+      IpProtocol: tcp
+      FromPort: 15021
+      ToPort: 15021
+      Description: NLB health check to Istio gateway status port
+
+  # ---------- Internal NLB (~$16/mo + LCU), AZ A only (N10) ----------
+  Nlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${Project}-internal'
+      Type: network
+      Scheme: internal
+      Subnets: [!Select [0, !Split [',', { 'Fn::ImportValue': !Sub '${NetworkStack}-AppSubnetIds' }]]]
+      SecurityGroups: [!Ref NlbSecurityGroup]
+
+  # Istio gateway pods are registered by AWS LBC through a TargetGroupBinding (manifests).
+  # Name prefix must stay '${Project}-' (LBC IAM policy in 05-eks).
+  IstioTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${Project}-istio'
+      VpcId: { 'Fn::ImportValue': !Sub '${NetworkStack}-VpcId' }
+      TargetType: ip
+      Protocol: TCP
+      Port: 8080
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: '15021'
+      HealthCheckPath: /healthz/ready
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      TargetGroupAttributes:
+        - { Key: deregistration_delay.timeout_seconds, Value: '30' }
+
+  # ponytail: TLS ends at the NLB; NLB -> gateway is plain HTTP inside the VPC, then Istio mTLS.
+  # Upgrade path: TLS target group to gateway port 8443 with a gateway certificate.
+  TlsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Nlb
+      Port: 443
+      Protocol: TLS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates: [{ CertificateArn: !Ref Certificate }]
+      DefaultActions: [{ Type: forward, TargetGroupArn: !Ref IstioTargetGroup }]
+
+  # ---------- Public HTTP API -> VPC Link -> NLB ----------
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${Project}-public'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: [!Ref CorsAllowOrigin]
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [content-type, x-lab-failure]
+
+  VpcLink:
+    Type: AWS::ApiGatewayV2::VpcLink
+    Properties:
+      Name: !Sub '${Project}-vpclink'
+      SubnetIds: [!Select [0, !Split [',', { 'Fn::ImportValue': !Sub '${NetworkStack}-AppSubnetIds' }]]]
+      SecurityGroupIds: [!Ref VpcLinkSecurityGroup]
+
+  NlbIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      ConnectionType: VPC_LINK
+      ConnectionId: !Ref VpcLink
+      IntegrationUri: !Ref TlsListener
+      PayloadFormatVersion: '1.0'
+      TlsConfig:
+        ServerNameToVerify: !Sub
+          - '${ApiHostLabel}.${Zone}'
+          - Zone: { 'Fn::ImportValue': !Sub '${DnsStack}-ZoneName' }
+
+  # Public routes only. /api/v1/internal/* is never routed here (N09).
+  AcceptRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/v1/purchases
+      Target: !Sub 'integrations/${NlbIntegration}'
+
+  StatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/v1/purchases/{saleId}
+      Target: !Sub 'integrations/${NlbIntegration}'
+
+  RetryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/v1/purchases/{saleId}/retry
+      Target: !Sub 'integrations/${NlbIntegration}'
+
+  ApiAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${Project}-public'
+      RetentionInDays: !Ref LogRetentionDays
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingRateLimit: !Ref ThrottlingRateLimit
+        ThrottlingBurstLimit: !Ref ThrottlingBurstLimit
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogs.Arn
+        Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationStatus":"$context.integrationStatus","integrationError":"$context.integrationErrorMessage","ip":"$context.identity.sourceIp"}'
+
+  # ---------- Private path for Step Functions (EventBridge Connection in 04) ----------
+  ResourceGateway:
+    Type: AWS::VpcLattice::ResourceGateway
+    Properties:
+      Name: !Sub '${Project}-rgw'
+      VpcIdentifier: { 'Fn::ImportValue': !Sub '${NetworkStack}-VpcId' }
+      SubnetIds: [!Select [0, !Split [',', { 'Fn::ImportValue': !Sub '${NetworkStack}-AppSubnetIds' }]]]
+      SecurityGroupIds: [!Ref ResourceGatewaySecurityGroup]
+      IpAddressType: IPV4
+
+  # The DNS name (not the NLB name) so the TLS certificate matches what the HTTP Task calls.
+  ResourceConfiguration:
+    Type: AWS::VpcLattice::ResourceConfiguration
+    DependsOn: ApiInternalRecord
+    Properties:
+      Name: !Sub '${Project}-api-internal'
+      ResourceGatewayId: !Ref ResourceGateway
+      ResourceConfigurationType: SINGLE
+      ProtocolType: TCP
+      PortRanges: ['443']
+      ResourceConfigurationDefinition:
+        DnsResource:
+          DomainName: !Sub
+            - '${ApiHostLabel}.${Zone}'
+            - Zone: { 'Fn::ImportValue': !Sub '${DnsStack}-ZoneName' }
+          IpAddressType: IPV4
+
+Outputs:
+  ApiBaseUrl:
+    Description: 04-messaging ApiBaseUrl
+    Value: !Sub 'https://${ApiInternalRecord}'
+  ResourceConfigurationArn:
+    Description: 04-messaging ResourceConfigurationArn
+    Value: !GetAtt ResourceConfiguration.Arn
+  IstioTargetGroupArn:
+    Description: TargetGroupBinding spec.targetGroupARN (Kubernetes bootstrap)
+    Value: !Ref IstioTargetGroup
+    Export: { Name: !Sub '${AWS::StackName}-IstioTargetGroupArn' }
+  NlbSecurityGroupId:
+    Value: !Ref NlbSecurityGroup
+  PublicApiUrl:
+    Description: Direct public API URL (no auth, throttled). Browsers use CloudFront /api/* (07).
+    Value: !GetAtt HttpApi.ApiEndpoint
+  HttpApiId:
+    Value: !Ref HttpApi
+    Export: { Name: !Sub '${AWS::StackName}-HttpApiId' }

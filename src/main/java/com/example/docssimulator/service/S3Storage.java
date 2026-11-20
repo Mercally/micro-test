@@ -9,8 +9,10 @@ import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -49,6 +51,25 @@ public class S3Storage {
                         .contentType("application/pdf")
                         .build(),
                 RequestBody.fromBytes(content));
+    }
+
+    public boolean exists(String key) {
+        try {
+            s3Client.headObject(HeadObjectRequest.builder().bucket(bucket).key(key).build());
+            return true;
+        } catch (S3Exception exception) {
+            if (exception.statusCode() == 404) return false;
+            throw exception;
+        }
+    }
+
+    public byte[] download(String key) {
+        return s3Client.getObjectAsBytes(GetObjectRequest.builder().bucket(bucket).key(key).build()).asByteArray();
+    }
+
+    /** Idempotent: S3 returns success for a missing key. */
+    public void delete(String key) {
+        s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
     }
 
     public String createDownloadUrl(String key) {
