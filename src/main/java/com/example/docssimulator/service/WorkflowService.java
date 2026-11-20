@@ -7,6 +7,10 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDDocumentNameDictionary;
+import org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode;
+import org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification;
+import org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
@@ -224,7 +228,62 @@ public class WorkflowService {
     }
 
     byte[] createPdf(UUID saleId) {
+        return createPdf(saleId, 0);
+    }
+
+    /** Lab signing key: RSA 2048 generated once per pod (the cost of a real signature, not a real identity). */
+    private static final class SigningKey {
+        static final java.security.KeyPair PAIR = generate();
+
+        static java.security.KeyPair generate() {
+            try {
+                var generator = java.security.KeyPairGenerator.getInstance("RSA");
+                generator.initialize(2048);
+                return generator.generateKeyPair();
+            } catch (java.security.GeneralSecurityException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+    }
+
+    static java.security.PublicKey signingPublicKey() {
+        return SigningKey.PAIR.getPublic();
+    }
+
+    /** SHA256withRSA over the document content and sale id: real CPU of the "sign" operation. */
+    static byte[] sign(byte[] content, UUID saleId) {
+        try {
+            var signature = java.security.Signature.getInstance("SHA256withRSA");
+            signature.initSign(SigningKey.PAIR.getPrivate());
+            signature.update(content);
+            signature.update(saleId.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return signature.sign();
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IllegalStateException("No se pudo firmar el documento", e);
+        }
+    }
+
+    /**
+     * Creates and signs the document. attachmentBytes > 0 embeds a random (incompressible) attachment so
+     * the PDF really weighs that much; the signature (document info "Firma") covers that content.
+     */
+    byte[] createPdf(UUID saleId, int attachmentBytes) {
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] data = new byte[Math.max(0, attachmentBytes)];
+            java.util.concurrent.ThreadLocalRandom.current().nextBytes(data);
+            if (attachmentBytes > 0) {
+                PDEmbeddedFile file = new PDEmbeddedFile(document, new java.io.ByteArrayInputStream(data));
+                file.setSubtype("application/octet-stream");
+                file.setSize(data.length);
+                PDComplexFileSpecification spec = new PDComplexFileSpecification();
+                spec.setFile("anexo.bin");
+                spec.setEmbeddedFile(file);
+                PDEmbeddedFilesNameTreeNode files = new PDEmbeddedFilesNameTreeNode();
+                files.setNames(java.util.Map.of("anexo.bin", spec));
+                PDDocumentNameDictionary names = new PDDocumentNameDictionary(document.getDocumentCatalog());
+                names.setEmbeddedFiles(files);
+                document.getDocumentCatalog().setNames(names);
+            }
             PDPage page = new PDPage();
             document.addPage(page);
             try (PDPageContentStream content = new PDPageContentStream(document, page)) {
@@ -233,6 +292,11 @@ public class WorkflowService {
                 content.newLineAtOffset(72, 720);
                 content.showText("Documento de prueba - Seguro " + saleId);
                 content.endText();
+            }
+            if (attachmentBytes > 0) {
+                var info = document.getDocumentInformation();
+                info.setCustomMetadataValue("FirmaAlgoritmo", "SHA256withRSA");
+                info.setCustomMetadataValue("Firma", java.util.Base64.getEncoder().encodeToString(sign(data, saleId)));
             }
             document.save(output);
             return output.toByteArray();

@@ -17,6 +17,8 @@ export interface StepAttempt {
   outcome: string;
   detail?: string | null;
   delayMs: number;
+  cpuMs?: number;
+  memoryMb?: number;
   durationMs?: number | null;
   startedAt: string;
   finishedAt?: string | null;
@@ -45,6 +47,10 @@ export interface SaleView {
 export interface LabSettings {
   stepDelayMinMs: number;
   stepDelayMaxMs: number;
+  stepCpuMs: number;
+  stepMemoryMb: number;
+  documentMinKb: number;
+  documentMaxKb: number;
 }
 
 export interface QueueView {
@@ -69,7 +75,7 @@ export interface SystemView {
     hpa?: { name: string; current: number; desired: number; min: number; max: number }[];
     nodes?: { name: string; pool: string; capacityType: string; instanceType: string; ready: boolean }[];
   };
-  limits: Record<string, number>;
+  limits: Record<string, number | string>;
 }
 
 @Injectable({ providedIn: 'root' })

@@ -52,6 +52,7 @@ class ProcessIntegrationTest {
         assertEquals("docs_business_test", db.queryForObject("SELECT current_database()", String.class),
                 "Tests must never truncate a lab/user database");
         db.execute("TRUNCATE process.steps,endpoint0.lab_faults,endpoint0.outbox,endpoint0.sales CASCADE");
+        db.update("UPDATE process.lab_settings SET document_min_kb=0,document_max_kb=0"); // tiny PDFs keep the suite fast
         doAnswer(i -> { uploads.incrementAndGet(); s3.put(i.getArgument(0), i.getArgument(1)); return null; })
                 .when(storage).upload(anyString(), any());
         when(storage.exists(anyString())).thenAnswer(i -> s3.containsKey(i.<String>getArgument(0)));
@@ -86,6 +87,29 @@ class ProcessIntegrationTest {
 
     String saleStatus(UUID saleId) {
         return db.queryForObject("SELECT status FROM endpoint0.sales WHERE id=?", String.class, saleId);
+    }
+
+    @Test
+    void documentIsCreatedSignedAndCarriedAtTheConfiguredSize() throws Exception {
+        db.update("UPDATE process.lab_settings SET document_min_kb=200,document_max_kb=500");
+        var sentToCm = new java.util.concurrent.atomic.AtomicReference<byte[]>();
+        doAnswer(i -> { sentToCm.set(i.getArgument(1)); cm.add(i.getArgument(0)); return "CM-x"; }).when(external).storeCmDocument(any(), any());
+        UUID saleId = sale("five-mb");
+        process.document(saleId, null);
+        byte[] uploaded = s3.get(ProcessService.key(saleId));
+        assertTrue(uploaded.length >= 200 * 1024 && uploaded.length <= 520 * 1024, "PDF between 200 and 500 KB: " + uploaded.length);
+        try (var pdf = org.apache.pdfbox.Loader.loadPDF(uploaded)) {
+            assertEquals(1, pdf.getNumberOfPages());
+            byte[] content = pdf.getDocumentCatalog().getNames().getEmbeddedFiles().getNames().get("anexo.bin").getEmbeddedFile().toByteArray();
+            var verifier = java.security.Signature.getInstance("SHA256withRSA");
+            verifier.initVerify(WorkflowService.signingPublicKey());
+            verifier.update(content);
+            verifier.update(saleId.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertTrue(verifier.verify(java.util.Base64.getDecoder().decode(pdf.getDocumentInformation().getCustomMetadataValue("Firma"))),
+                    "real SHA256withRSA signature over the document content");
+        }
+        process.cm(saleId, null);
+        assertArrayEquals(uploaded, sentToCm.get(), "CM receives the same document downloaded from S3");
     }
 
     @Test

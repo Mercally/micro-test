@@ -102,6 +102,9 @@ También desde la UI: `$SITE` con URL base `/api/v1`.
 | `DbInstanceClass` | 03-data | Tamaño de RDS PostgreSQL (reinicio ~5 min al cambiar) |
 | `API_MAX_REPLICAS`, `API_MESSAGES_PER_POD` | bootstrap.sh | Pods de api y mensajes SQS por pod antes de escalar |
 | `KARPENTER_CPU_LIMIT` | bootstrap.sh | vCPU máximas que Karpenter puede lanzar |
+| `API_CPU_REQUEST` | bootstrap.sh | CPU reservada por pod api (default 250m); subirla junto con `step_cpu_ms` para que KEDA + Karpenter agreguen CPU real |
+| `document_min_kb`, `document_max_kb` | tabla `process.lab_settings` / panel | Tamaño real del documento firmado (default 200–500 KB) |
+| `step_cpu_ms`, `step_memory_mb` | tabla `process.lab_settings` / panel | CPU real y memoria por paso de negocio (simulación de trabajo) |
 | `step_delay_min_ms`, `step_delay_max_ms` | tabla `process.lab_settings` (SQL, en vivo) | Espera aleatoria antes de cada paso de negocio; default 0–10000 ms ([CARGA.md](../CARGA.md)) |
 | `MOCKS_FAILURE_PROBABILITY`, `MOCKS_LATENCY_MS` | bootstrap.sh | Fallos raros y lentitud de CM/Aseguradora |
 
@@ -118,6 +121,15 @@ kubectl delete node -l karpenter.sh/nodepool=workloads
 Pasos válidos para `X-Lab-Failure`: `document`, `cm`, `insurer`.
 
 ## Carga y escalado
+
+Nodos de workloads: Karpenter elige entre `small`, `medium` y `large` (t4g/c7g/m7g, arm64). Con
+pocos pods lanza `t4g.small` (~2 pods api por nodo), así cada paso de KEDA hace que Karpenter
+agregue un nodo; con un lote grande de pods pendientes puede elegir uno mayor. t4g es burstable:
+CPU sostenida consume créditos (modo unlimited, cobro extra pequeño).
+
+Istio reparte la carga hacia api con `DestinationRule` (`app.yaml`): `LEAST_REQUEST` (pod con
+menos peticiones en curso), calentamiento de 30 s para pods nuevos y expulsión temporal de pods
+con fallos de conexión (no por los 503 simulados).
 
 Panel de pruebas en la UI (CloudFront): escenarios de fallo, ráfagas, DLQ y vista en vivo de
 cola, pods, HPA y nodos. El pod `api` lee Kubernetes con RBAC de solo lectura (`lab-panel-view`

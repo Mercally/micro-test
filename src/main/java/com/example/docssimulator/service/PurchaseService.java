@@ -110,7 +110,7 @@ public class PurchaseService {
     }
 
     private static final String HISTORY = """
-            SELECT sale_id,step,outcome,detail,delay_ms AS "delayMs",duration_ms AS "durationMs",
+            SELECT sale_id,step,outcome,detail,delay_ms AS "delayMs",cpu_ms AS "cpuMs",memory_mb AS "memoryMb",duration_ms AS "durationMs",
               started_at AS "startedAt",finished_at AS "finishedAt" FROM process.history""";
 
     /**

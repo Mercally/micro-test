@@ -16,14 +16,15 @@ public class LabController {
 
     public LabController(LabService lab) { this.lab = lab; }
 
-    public record Settings(int stepDelayMinMs, int stepDelayMaxMs) {}
+    public record Settings(int stepDelayMinMs, int stepDelayMaxMs, Integer stepCpuMs, Integer stepMemoryMb,
+                           Integer documentMinKb, Integer documentMaxKb) {}
     public record Burst(int count, String failure) {}
 
     @GetMapping("/settings")
     public Map<String, Object> settings() { return lab.settings(); }
 
     @PutMapping("/settings")
-    public Map<String, Object> update(@RequestBody Settings s) { return lab.updateSettings(s.stepDelayMinMs(), s.stepDelayMaxMs()); }
+    public Map<String, Object> update(@RequestBody Settings s) { return lab.updateSettings(s.stepDelayMinMs(), s.stepDelayMaxMs(), s.stepCpuMs(), s.stepMemoryMb(), s.documentMinKb(), s.documentMaxKb()); }
 
     @GetMapping("/system")
     public Map<String, Object> system() { return lab.system(); }

@@ -40,7 +40,7 @@ public class ProcessService {
     // ponytail: the sale row lock is held across S3/HTTP calls so duplicate executions serialize per sale.
     // Ceiling: one pooled connection per in-flight step. Upgrade path: short "in progress" marker + no lock during I/O.
 
-    /** Step 1: prepare, fill and sign the document; store it in temporary S3. */
+    /** Step 1: prepare, fill and sign the document (real SHA256withRSA over its content); store it in temporary S3. */
     @Transactional
     public Map<String, Object> document(UUID saleId, UUID eventId) {
         lockSale(saleId);
@@ -48,7 +48,7 @@ public class ProcessService {
         // Done means "file available for step 2" or step 2 already consumed it.
         if (done(saleId, DOCUMENT) && (done(saleId, CM) || storage.exists(key))) return result(saleId, DOCUMENT, "ALREADY_DONE");
         fault(eventId, "document");
-        storage.upload(key, pdf.createPdf(saleId));
+        storage.upload(key, pdf.createPdf(saleId, documentBytes()));
         if (!storage.exists(key)) throw new TransientWorkflowException("document: archivo no verificado en S3");
         record(saleId, DOCUMENT, key, "DONE");
         db.update("UPDATE endpoint0.sales SET status='PROCESSING',last_error=NULL,updated_at=now() WHERE id=? AND status<>'COMPLETED'", saleId);
@@ -112,6 +112,15 @@ public class ProcessService {
         db.update("UPDATE endpoint0.sales SET status='FAILED',last_error=?,updated_at=now() WHERE id=? AND status<>'COMPLETED'",
                 message, saleId);
         return Map.of("saleId", saleId.toString(), "status", status(saleId));
+    }
+
+    /** Random size in [document_min_kb, document_max_kb] from process.lab_settings (0 when absent). */
+    private int documentBytes() {
+        var rows = db.queryForList("SELECT document_min_kb AS min, document_max_kb AS max FROM process.lab_settings");
+        if (rows.isEmpty()) return 0;
+        int min = ((Number) rows.get(0).get("min")).intValue();
+        int max = Math.max(min, ((Number) rows.get(0).get("max")).intValue());
+        return java.util.concurrent.ThreadLocalRandom.current().nextInt(min, max + 1) * 1024;
     }
 
     private void lockSale(UUID saleId) {

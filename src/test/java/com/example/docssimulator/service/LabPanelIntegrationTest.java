@@ -46,7 +46,7 @@ class LabPanelIntegrationTest {
         assertEquals("docs_business_test", db.queryForObject("SELECT current_database()", String.class),
                 "Tests must never truncate a lab/user database");
         db.execute("TRUNCATE process.history,process.steps,endpoint0.lab_faults,endpoint0.outbox,endpoint0.sales CASCADE");
-        db.update("UPDATE process.lab_settings SET step_delay_min_ms=0,step_delay_max_ms=10000");
+        db.update("UPDATE process.lab_settings SET step_delay_min_ms=0,step_delay_max_ms=10000,step_cpu_ms=0,step_memory_mb=0,document_min_kb=200,document_max_kb=500");
         when(sqs.getQueueAttributes(any(Consumer.class))).thenReturn(GetQueueAttributesResponse.builder().attributes(Map.of(
                 QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES, "7", QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE, "2",
                 QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_DELAYED, "0",
@@ -61,6 +61,25 @@ class LabPanelIntegrationTest {
         http.perform(put("/api/v1/lab/settings").contentType("application/json").content("{\"stepDelayMinMs\":0,\"stepDelayMaxMs\":16000}"))
                 .andExpect(status().isBadRequest());
         assertEquals(2000, db.queryForObject("SELECT step_delay_max_ms FROM process.lab_settings", Integer.class));
+        http.perform(put("/api/v1/lab/settings").contentType("application/json")
+                        .content("{\"stepDelayMinMs\":500,\"stepDelayMaxMs\":3000,\"stepCpuMs\":300,\"stepMemoryMb\":16}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.stepCpuMs").value(300)).andExpect(jsonPath("$.stepMemoryMb").value(16))
+                .andExpect(jsonPath("$.documentMinKb").value(200)).andExpect(jsonPath("$.documentMaxKb").value(500));
+        http.perform(put("/api/v1/lab/settings").contentType("application/json")
+                        .content("{\"stepDelayMinMs\":0,\"stepDelayMaxMs\":0,\"documentMinKb\":200,\"documentMaxKb\":20000}"))
+                .andExpect(status().isBadRequest());
+        http.perform(put("/api/v1/lab/settings").contentType("application/json")
+                        .content("{\"stepDelayMinMs\":0,\"stepDelayMaxMs\":0,\"documentMinKb\":600,\"documentMaxKb\":500}"))
+                .andExpect(status().isBadRequest());
+        http.perform(put("/api/v1/lab/settings").contentType("application/json")
+                        .content("{\"stepDelayMinMs\":0,\"stepDelayMaxMs\":1000}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.stepCpuMs").value(300)); // omitted fields keep their value
+        http.perform(put("/api/v1/lab/settings").contentType("application/json")
+                        .content("{\"stepDelayMinMs\":0,\"stepDelayMaxMs\":15000,\"stepCpuMs\":3000}"))
+                .andExpect(status().isBadRequest()); // 18 s would brush the 20 s step timeout
+        http.perform(put("/api/v1/lab/settings").contentType("application/json")
+                        .content("{\"stepDelayMinMs\":0,\"stepDelayMaxMs\":0,\"stepMemoryMb\":65}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

@@ -45,6 +45,7 @@ app:
       api-max-replicas: ${LAB_API_MAX_REPLICAS:0}
       messages-per-pod: ${LAB_MESSAGES_PER_POD:0}
       karpenter-cpu-limit: ${LAB_KARPENTER_CPU_LIMIT:0}
+      api-cpu-request: ${LAB_API_CPU_REQUEST:}
   s3:
     region: ${AWS_REGION:us-east-1}
     endpoint: ${S3_ENDPOINT_URL:}

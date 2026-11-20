@@ -31,16 +31,16 @@ public class ProcessController {
     /** eventId only selects lab faults; idempotency is per sale and step. */
     public record StepRequest(UUID eventId, String error) {}
 
-    /** Journals every attempt (RUNNING → outcome) and applies the lab delay before business steps. */
+    /** Journals every attempt (RUNNING → outcome) and runs the lab's simulated work before business steps. */
     @PostMapping("/{step}")
     public Map<String, Object> run(@PathVariable UUID saleId, @PathVariable String step,
                                    @RequestBody(required = false) StepRequest body) throws InterruptedException {
         if (!STEPS.contains(step)) throw new PurchaseException(404, "UNKNOWN_STEP", step);
         long started = System.nanoTime();
-        int delay = PACED.contains(step) ? history.delayMs() : 0;
-        long id = history.start(saleId, step, delay);
+        ProcessHistory.Work work = PACED.contains(step) ? history.work() : ProcessHistory.Work.NONE;
+        long id = history.start(saleId, step, work);
         try {
-            Thread.sleep(delay);
+            ProcessHistory.simulate(work);
             Map<String, Object> result = execute(saleId, step, body);
             history.finish(id, String.valueOf(result.getOrDefault("outcome", result.get("status"))), null, elapsedMs(started));
             return result;

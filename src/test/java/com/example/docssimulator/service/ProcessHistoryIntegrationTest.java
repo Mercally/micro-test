@@ -37,7 +37,7 @@ class ProcessHistoryIntegrationTest {
         assertEquals("docs_business_test", db.queryForObject("SELECT current_database()", String.class),
                 "Tests must never truncate a lab/user database");
         db.execute("TRUNCATE process.history,process.steps,endpoint0.lab_faults,endpoint0.outbox,endpoint0.sales CASCADE");
-        db.update("UPDATE process.lab_settings SET step_delay_min_ms=0,step_delay_max_ms=0");
+        db.update("UPDATE process.lab_settings SET step_delay_min_ms=0,step_delay_max_ms=0,step_cpu_ms=0,step_memory_mb=0");
         when(storage.exists(anyString())).thenReturn(true);
         when(external.findCmDocument(any())).thenReturn("CM-x");
     }
@@ -85,6 +85,25 @@ class ProcessHistoryIntegrationTest {
         step(saleId, "fail", 200);
         assertEquals(java.util.List.of(300, 0),
                 db.queryForList("SELECT delay_ms FROM process.history WHERE sale_id=? ORDER BY id", Integer.class, saleId));
+    }
+
+    @Test
+    void simulatedWorkBurnsRealCpuTimeHoldsMemoryAndIsJournaled() throws Exception {
+        db.update("UPDATE process.lab_settings SET step_cpu_ms=200,step_memory_mb=8");
+        var threads = java.lang.management.ManagementFactory.getThreadMXBean();
+        long cpuBefore = threads.getCurrentThreadCpuTime();
+        ProcessHistory.simulate(new ProcessHistory.Work(0, 150, 4));
+        assertTrue((threads.getCurrentThreadCpuTime() - cpuBefore) / 1_000_000 >= 150, "CPU time, not wall time");
+
+        UUID saleId = sale("worked", null);
+        step(saleId, "document", 200);
+        var row = db.queryForMap("SELECT cpu_ms,memory_mb,duration_ms FROM process.history WHERE sale_id=?", saleId);
+        assertEquals(200, row.get("cpu_ms"));
+        assertEquals(8, row.get("memory_mb"));
+        assertTrue(((Number) row.get("duration_ms")).intValue() >= 200);
+        http.perform(get("/api/v1/purchases").param("limit", "1"))
+                .andExpect(jsonPath("$[0].history[0].cpuMs").value(200))
+                .andExpect(jsonPath("$[0].history[0].memoryMb").value(8));
     }
 
     @Test

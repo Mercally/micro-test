@@ -142,3 +142,16 @@ CREATE TABLE IF NOT EXISTS process.lab_settings (
     CHECK (step_delay_min_ms >= 0 AND step_delay_max_ms >= step_delay_min_ms AND step_delay_max_ms <= 15000)
 );
 INSERT INTO process.lab_settings(id) VALUES (TRUE) ON CONFLICT DO NOTHING;
+
+-- Simulated work per business step (lab): CPU time burned (contention stretches wall time) and memory
+-- held while the step runs. Columns added idempotently so existing databases upgrade on startup.
+-- Defaults are non-zero: every business step does some work, like a real service would.
+ALTER TABLE process.lab_settings ADD COLUMN IF NOT EXISTS step_cpu_ms INTEGER NOT NULL DEFAULT 100 CHECK (step_cpu_ms BETWEEN 0 AND 3000);
+ALTER TABLE process.lab_settings ADD COLUMN IF NOT EXISTS step_memory_mb INTEGER NOT NULL DEFAULT 8 CHECK (step_memory_mb BETWEEN 0 AND 64);
+ALTER TABLE process.history ADD COLUMN IF NOT EXISTS cpu_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE process.history ADD COLUMN IF NOT EXISTS memory_mb INTEGER NOT NULL DEFAULT 0;
+-- Lab document size: each generated PDF weighs a random size in [min,max] KB (incompressible attachment),
+-- so document steps really hold and move it: create + sign + S3 upload ("document"); S3 download + CM
+-- upload ("cm"). Default 200-500 KB, like the real signed document.
+ALTER TABLE process.lab_settings ADD COLUMN IF NOT EXISTS document_min_kb INTEGER NOT NULL DEFAULT 200 CHECK (document_min_kb BETWEEN 0 AND 10240);
+ALTER TABLE process.lab_settings ADD COLUMN IF NOT EXISTS document_max_kb INTEGER NOT NULL DEFAULT 500 CHECK (document_max_kb BETWEEN 0 AND 10240);

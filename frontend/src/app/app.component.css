@@ -498,8 +498,6 @@ footer strong {
 .sale-list {
   display: flex;
   flex-direction: column;
-  max-height: 70vh;
-  overflow-y: auto;
 }
 
 .sale {
@@ -783,4 +781,45 @@ footer strong {
 
 .sale-row {
   grid-template-columns: 16px minmax(120px, 1.2fr) auto minmax(120px, 1.5fr) auto auto;
+}
+
+/* Collapsible sections (native details) */
+.panel {
+  margin-bottom: 22px;
+}
+
+.panel > summary {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 0;
+}
+
+.panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel > summary h2::before {
+  content: "▸ ";
+  color: #77869a;
+}
+
+.panel[open] > summary {
+  margin-bottom: 18px;
+}
+
+.panel[open] > summary h2::before {
+  content: "▾ ";
+}
+
+.info {
+  margin-top: 18px;
+  color: #53657b;
+  font-size: 13px;
+}
+
+.info > summary {
+  cursor: pointer;
+  color: #2f6fed;
+  font-weight: 650;
+  margin-bottom: 8px;
 }

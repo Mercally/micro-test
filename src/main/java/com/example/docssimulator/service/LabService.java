@@ -44,7 +44,8 @@ public class LabService {
                       @Value("${app.lab.panel.max-concurrency}") int maxConcurrency,
                       @Value("${app.lab.panel.api-max-replicas}") int apiMaxReplicas,
                       @Value("${app.lab.panel.messages-per-pod}") int messagesPerPod,
-                      @Value("${app.lab.panel.karpenter-cpu-limit}") int karpenterCpuLimit) {
+                      @Value("${app.lab.panel.karpenter-cpu-limit}") int karpenterCpuLimit,
+                      @Value("${app.lab.panel.api-cpu-request}") String apiCpuRequest) {
         this.db = db;
         this.sqs = sqs;
         this.kubernetes = kubernetes;
@@ -54,18 +55,36 @@ public class LabService {
         this.namespace = namespace;
         this.limits = Map.of("maxConcurrency", maxConcurrency, "apiMaxReplicas", apiMaxReplicas,
                 "messagesPerPod", messagesPerPod, "karpenterCpuLimit", karpenterCpuLimit,
-                "stepAttempts", 3, "deliveries", 3);
+                "stepAttempts", 3, "deliveries", 3, "apiCpuRequest", apiCpuRequest);
     }
 
     public Map<String, Object> settings() {
-        return db.queryForMap("SELECT step_delay_min_ms AS \"stepDelayMinMs\", step_delay_max_ms AS \"stepDelayMaxMs\" FROM process.lab_settings");
+        return db.queryForMap("""
+                SELECT step_delay_min_ms AS "stepDelayMinMs", step_delay_max_ms AS "stepDelayMaxMs",
+                  step_cpu_ms AS "stepCpuMs", step_memory_mb AS "stepMemoryMb",
+                  document_min_kb AS "documentMinKb", document_max_kb AS "documentMaxKb"
+                FROM process.lab_settings""");
     }
 
-    public Map<String, Object> updateSettings(int minMs, int maxMs) {
+    /** Null cpu/memory keep their current value. Wait + CPU stays under the 20 s step timeout with margin. */
+    public Map<String, Object> updateSettings(int minMs, int maxMs, Integer cpuMs, Integer memoryMb,
+                                              Integer documentMinKb, Integer documentMaxKb) {
+        int cpu = cpuMs != null ? cpuMs : ((Number) settings().get("stepCpuMs")).intValue();
+        if (documentMinKb != null && documentMaxKb != null && documentMinKb > documentMaxKb) {
+            throw new PurchaseException(400, "INVALID_SETTINGS", "Documento: mínimo <= máximo");
+        }
+        if (maxMs + cpu > 16000) {
+            throw new PurchaseException(400, "INVALID_SETTINGS", "Espera máxima + CPU no debe superar 16000 ms (timeout del paso: 20 s)");
+        }
         try {
-            db.update("UPDATE process.lab_settings SET step_delay_min_ms=?,step_delay_max_ms=?", minMs, maxMs);
+            db.update("""
+                    UPDATE process.lab_settings SET step_delay_min_ms=?,step_delay_max_ms=?,
+                      step_cpu_ms=COALESCE(?,step_cpu_ms),step_memory_mb=COALESCE(?,step_memory_mb),
+                      document_min_kb=COALESCE(?,document_min_kb),document_max_kb=COALESCE(?,document_max_kb)""",
+                    minMs, maxMs, cpuMs, memoryMb, documentMinKb, documentMaxKb);
         } catch (DataIntegrityViolationException e) {
-            throw new PurchaseException(400, "INVALID_SETTINGS", "Rango válido: 0 <= mínimo <= máximo <= 15000 ms");
+            throw new PurchaseException(400, "INVALID_SETTINGS",
+                    "Rangos: 0 <= espera mín <= máx <= 15000 ms; CPU 0-3000 ms; memoria 0-64 MB; documento 0-10240 KB");
         }
         return settings();
     }

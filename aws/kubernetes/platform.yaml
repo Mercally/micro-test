@@ -34,7 +34,9 @@ spec:
         - { key: kubernetes.io/arch, operator: In, values: [arm64] }
         - { key: karpenter.sh/capacity-type, operator: In, values: [spot, on-demand] }
         - { key: karpenter.k8s.aws/instance-family, operator: In, values: [t4g, c7g, m7g] }
-        - { key: karpenter.k8s.aws/instance-size, operator: In, values: [medium, large, xlarge] }
+        # small first: few api pods per node, so each KEDA scale-out step makes Karpenter add a node.
+        # Karpenter still packs a large batch of pending pods onto a bigger, cheaper-per-pod node.
+        - { key: karpenter.k8s.aws/instance-size, operator: In, values: [small, medium, large] }
       expireAfter: 168h
   # Hard ceiling of the experiment: Karpenter never exceeds this capacity.
   limits:

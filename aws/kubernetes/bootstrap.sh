@@ -23,6 +23,7 @@ KEDA_VERSION="${KEDA_VERSION:-2.21.1}"               # kedacore/keda
 export KARPENTER_CPU_LIMIT="${KARPENTER_CPU_LIMIT:-16}"
 # Concurrent steps one api pod serves well (~ Hikari pool of 10, minus headroom).
 export API_MESSAGES_PER_POD="${API_MESSAGES_PER_POD:-8}"
+export API_CPU_REQUEST="${API_CPU_REQUEST:-250m}"   # api pod CPU request: real work (create + sign + step_cpu_ms)
 export MOCKS_FAILURE_PROBABILITY="${MOCKS_FAILURE_PROBABILITY:-0.02}"
 export MOCKS_LATENCY_MS="${MOCKS_LATENCY_MS:-0}"
 

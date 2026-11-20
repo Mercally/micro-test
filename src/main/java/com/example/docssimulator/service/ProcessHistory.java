@@ -1,5 +1,7 @@
 package com.example.docssimulator.service;
 
+import java.lang.management.ManagementFactory;
+import java.lang.ref.Reference;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -9,28 +11,65 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * Step attempt journal and lab pacing for the AWS flow. Used outside step transactions:
- * rows survive failed attempts, and the pause never holds the sale lock.
+ * Step attempt journal and lab work simulation for the AWS flow. Used outside step transactions:
+ * rows survive failed attempts, and the simulated work never holds the sale lock.
  */
 @Service
 public class ProcessHistory {
     private static final Logger log = LoggerFactory.getLogger(ProcessHistory.class);
+    private static volatile long sink; // keeps the CPU loop from being optimized away
     private final JdbcTemplate db;
 
     public ProcessHistory(JdbcTemplate db) { this.db = db; }
 
-    /** Random delay in [min,max] from process.lab_settings, read live so SQL changes apply at once. */
-    public int delayMs() {
-        var rows = db.queryForList("SELECT step_delay_min_ms AS min, step_delay_max_ms AS max FROM process.lab_settings");
-        if (rows.isEmpty()) return 0;
-        int min = ((Number) rows.get(0).get("min")).intValue();
-        int max = ((Number) rows.get(0).get("max")).intValue();
-        return max <= min ? min : ThreadLocalRandom.current().nextInt(min, max + 1);
+    /** Simulated work for one step: I/O wait, CPU time and memory held. */
+    public record Work(int delayMs, int cpuMs, int memoryMb) {
+        public static final Work NONE = new Work(0, 0, 0);
     }
 
-    public long start(UUID saleId, String step, int delayMs) {
-        return db.queryForObject("INSERT INTO process.history(sale_id,step,outcome,delay_ms) VALUES (?,?,'RUNNING',?) RETURNING id",
-                Long.class, saleId, step, delayMs);
+    /** Read live from process.lab_settings so SQL or panel changes apply to the next step. */
+    public Work work() {
+        var rows = db.queryForList("""
+                SELECT step_delay_min_ms AS min, step_delay_max_ms AS max, step_cpu_ms AS cpu, step_memory_mb AS mem
+                FROM process.lab_settings""");
+        if (rows.isEmpty()) return Work.NONE;
+        var r = rows.get(0);
+        int min = ((Number) r.get("min")).intValue();
+        int max = ((Number) r.get("max")).intValue();
+        int delay = max <= min ? min : ThreadLocalRandom.current().nextInt(min, max + 1);
+        return new Work(delay, ((Number) r.get("cpu")).intValue(), ((Number) r.get("mem")).intValue());
+    }
+
+    /**
+     * Holds memoryMb (pages touched so the pod's RSS really grows), burns cpuMs of this thread's CPU
+     * time, then waits delayMs. CPU is measured as CPU time, not wall time: when the node is saturated
+     * the step takes longer, like real work would.
+     */
+    public static void simulate(Work work) throws InterruptedException {
+        byte[] held = work.memoryMb() > 0 ? new byte[work.memoryMb() * 1024 * 1024] : null;
+        if (held != null) for (int i = 0; i < held.length; i += 4096) held[i] = 1;
+        burnCpu(work.cpuMs());
+        Thread.sleep(work.delayMs());
+        Reference.reachabilityFence(held);
+    }
+
+    static void burnCpu(int cpuMs) {
+        if (cpuMs <= 0) return;
+        var threads = ManagementFactory.getThreadMXBean();
+        boolean cpuTime = threads.isCurrentThreadCpuTimeSupported();
+        long target = (cpuTime ? threads.getCurrentThreadCpuTime() : System.nanoTime()) + cpuMs * 1_000_000L;
+        long x = 0;
+        do {
+            for (int i = 0; i < 20_000; i++) x += (x ^ i) * 31 + i;
+        } while ((cpuTime ? threads.getCurrentThreadCpuTime() : System.nanoTime()) < target);
+        sink = x;
+    }
+
+    public long start(UUID saleId, String step, Work work) {
+        return db.queryForObject("""
+                INSERT INTO process.history(sale_id,step,outcome,delay_ms,cpu_ms,memory_mb)
+                VALUES (?,?,'RUNNING',?,?,?) RETURNING id""",
+                Long.class, saleId, step, work.delayMs(), work.cpuMs(), work.memoryMb());
     }
 
     /** Best effort: a journal failure must not turn a finished step into an error. */

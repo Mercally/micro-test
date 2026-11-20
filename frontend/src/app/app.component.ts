@@ -95,7 +95,7 @@ const STEP_LABELS: Record<string, string> = {
           <p class="eyebrow">LÍMITES (PRESUPUESTO)</p>
           <p class="muted">Ejecuciones simultáneas (Lambda/Step Functions): <b>{{ s.limits['maxConcurrency'] }}</b> ·
             pods api máx: <b>{{ s.limits['apiMaxReplicas'] }}</b> ({{ s.limits['messagesPerPod'] }} msg/pod) ·
-            vCPU Karpenter máx: <b>{{ s.limits['karpenterCpuLimit'] }}</b> ·
+            vCPU Karpenter máx: <b>{{ s.limits['karpenterCpuLimit'] }}</b> · CPU reservada por pod api: <b>{{ s.limits['apiCpuRequest'] }}</b> ·
             intentos por paso: {{ s.limits['stepAttempts'] }} · entregas SQS: {{ s.limits['deliveries'] }}</p>
           <p class="muted">Se cambian por CLI (stack 04 <code>MaxConcurrency</code>; <code>bootstrap.sh</code> para pods y vCPU). Ver CARGA.md y ESCALADO.md.</p>
         </article>
@@ -103,13 +103,12 @@ const STEP_LABELS: Record<string, string> = {
       </section>
       <ng-template #systemPending><section class="metrics"><article class="metric wide"><p class="muted">{{ systemError || 'Consultando sistema…' }}</p></article></section></ng-template>
 
-      <section class="content-grid">
-        <!-- ===== Escenario ===== -->
-        <section class="card">
-          <div class="section-heading">
-            <div><p class="eyebrow">ESCENARIO</p><h2>Fallos y carga</h2></div>
-            <span class="step-number">01</span>
-          </div>
+      <!-- ===== 01 Escenario (abierto por defecto) ===== -->
+      <details class="card panel" open>
+        <summary class="section-heading">
+          <div><p class="eyebrow">ESCENARIO</p><h2>Fallos y carga</h2></div>
+          <span class="step-number">01</span>
+        </summary>
           <div class="presets">
             <button *ngFor="let p of presets" type="button" class="chip" [class.active]="isPreset(p)" (click)="apply(p)">{{ p.name }}</button>
           </div>
@@ -158,34 +157,48 @@ const STEP_LABELS: Record<string, string> = {
             <summary>Equivalente por CLI</summary>
             <code>{{ cliCommand }}</code>
           </details>
-        </section>
+      </details>
 
-        <!-- ===== Tiempos ===== -->
-        <section class="card">
-          <div class="section-heading">
-            <div><p class="eyebrow">TIEMPOS</p><h2>Duración de cada paso</h2></div>
-            <span class="step-number">02</span>
-          </div>
-          <p class="muted">Espera aleatoria antes de documento, CM y aseguradora. Aplica al instante (tabla <code>process.lab_settings</code>). Máximo 15 000 ms: el paso expira a los 20 s.</p>
-          <div class="form-grid two" *ngIf="settings">
-            <label class="field"><span>Mínimo (ms)</span><input type="number" min="0" max="15000" step="100" [(ngModel)]="settings.stepDelayMinMs"></label>
-            <label class="field"><span>Máximo (ms)</span><input type="number" min="0" max="15000" step="100" [(ngModel)]="settings.stepDelayMaxMs"></label>
+      <!-- ===== 02 Trabajo por paso (cerrado por defecto) ===== -->
+      <details class="card panel">
+        <summary class="section-heading">
+          <div><p class="eyebrow">TRABAJO POR PASO</p><h2>Espera, CPU, memoria y documento</h2></div>
+          <span class="step-number">02</span>
+        </summary>
+          <div class="form-grid" *ngIf="settings">
+            <label class="field"><span>Espera mínima (ms)</span><input type="number" min="0" max="15000" step="100" [(ngModel)]="settings.stepDelayMinMs"></label>
+            <label class="field"><span>Espera máxima (ms)</span><input type="number" min="0" max="15000" step="100" [(ngModel)]="settings.stepDelayMaxMs"></label>
+            <label class="field"><span>CPU por paso (ms, 0–3000)</span><input type="number" min="0" max="3000" step="50" [(ngModel)]="settings.stepCpuMs"></label>
+            <label class="field"><span>Memoria por paso (MB, 0–64)</span><input type="number" min="0" max="64" step="4" [(ngModel)]="settings.stepMemoryMb"></label>
+            <label class="field"><span>Documento mínimo (KB)</span><input type="number" min="0" max="10240" step="50" [(ngModel)]="settings.documentMinKb"></label>
+            <label class="field"><span>Documento máximo (KB)</span><input type="number" min="0" max="10240" step="50" [(ngModel)]="settings.documentMaxKb"></label>
           </div>
           <div class="presets">
-            <button type="button" class="chip" (click)="setDelay(0, 0)">Lo más rápido</button>
-            <button type="button" class="chip" (click)="setDelay(500, 3000)">0.5–3 s</button>
-            <button type="button" class="chip" (click)="setDelay(0, 10000)">0–10 s</button>
-            <button type="button" class="chip" (click)="setDelay(5000, 15000)">5–15 s (lento)</button>
+            <button type="button" class="chip" (click)="setWork(0, 0, 100, 8)">Por defecto: sin espera, 100 ms CPU, 8 MB</button>
+            <button type="button" class="chip" (click)="setWork(0, 0, 0, 0)">Mínimo (solo documento)</button>
+            <button type="button" class="chip" (click)="setWork(500, 3000, 200, 16)">Realista: 0.5–3 s + 200 ms CPU + 16 MB</button>
+            <button type="button" class="chip" (click)="setWork(0, 500, 800, 32)">CPU intensivo: 800 ms CPU + 32 MB</button>
+            <button type="button" class="chip" (click)="setWork(0, 10000, 100, 8)">Espera 0–10 s</button>
           </div>
-          <button class="secondary-button" type="button" (click)="saveSettings()" [disabled]="!settings || busy">Guardar tiempos</button>
-          <div class="prediction">
-            <p class="node-title">Cómo se encadenan los reintentos</p>
-            <p>Cada entrega de SQS ejecuta una Step Function. Cada paso tiene {{ attempts }} intentos ante 503/timeout.
-              Si el paso agota sus intentos, el mensaje se libera y vuelve en {{ releaseDelay }} s (reintento global).
-              Tras {{ deliveries }} entregas va a la DLQ y la venta queda FAILED. Un fallo permanente salta directo al reintento global.</p>
-          </div>
-        </section>
-      </section>
+          <button class="secondary-button" type="button" (click)="saveSettings()" [disabled]="!settings || busy">Guardar</button>
+          <details class="info">
+            <summary>Cómo funciona</summary>
+            <p class="muted">Simula trabajo real en documento, CM y aseguradora: <b>espera</b> de E/S (no usa CPU), <b>CPU</b> en milisegundos de CPU real
+              (si el nodo está saturado el paso tarda más) y <b>memoria</b> retenida durante el paso. Aplica al instante (<code>process.lab_settings</code>).
+              Espera máx + CPU ≤ 16 000 ms (el paso expira a los 20 s).</p>
+            <p class="muted">El documento (crear + firmar SHA256withRSA, subir a S3, descargar y enviar a CM) pesa de verdad entre el mínimo y el máximo:
+              esa memoria y esa transferencia son reales, además de la CPU/memoria simulada.</p>
+            <div class="prediction">
+              <p class="node-title">Cómo se encadenan los reintentos</p>
+              <p>Cada entrega de SQS ejecuta una Step Function. Cada paso tiene {{ attempts }} intentos ante 503/timeout.
+                Si el paso agota sus intentos, el mensaje se libera y vuelve en {{ releaseDelay }} s (reintento global).
+                Tras {{ deliveries }} entregas va a la DLQ y la venta queda FAILED. Un fallo permanente salta directo al reintento global.</p>
+              <p class="node-title">Cuándo ayudan más pods</p>
+              <p>La concurrencia la fija MaxConcurrency (Lambda). Más pods solo aceleran si el paso consume CPU: con CPU por paso &gt; 0,
+                un nodo saturado alarga cada paso; KEDA reparte y Karpenter agrega CPU. Sube <code>API_CPU_REQUEST</code> (bootstrap) para que los pods se repartan entre nodos.</p>
+            </div>
+          </details>
+      </details>
 
       <!-- ===== Ventas ===== -->
       <section class="card sales-card">
@@ -235,6 +248,7 @@ const STEP_LABELS: Record<string, string> = {
                           <span class="node-title">{{ label(a.step) }}</span>
                           <span class="status" [ngClass]="outcomeClass(a.outcome)">{{ a.outcome }}</span>
                           <span class="muted">{{ offset(sale, a.startedAt) }} · espera {{ seconds(a.delayMs) }}
+                            <ng-container *ngIf="a.cpuMs"> · CPU {{ a.cpuMs }} ms</ng-container><ng-container *ngIf="a.memoryMb"> · {{ a.memoryMb }} MB</ng-container>
                             <ng-container *ngIf="a.durationMs != null"> · total {{ seconds(a.durationMs) }}</ng-container></span>
                           <small class="row-error" *ngIf="a.detail">{{ a.detail }}</small>
                         </li>
@@ -411,8 +425,9 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   // ---------- Settings / DLQ / retry ----------
-  setDelay(min: number, max: number): void {
-    this.settings = { stepDelayMinMs: min, stepDelayMaxMs: max };
+  setWork(min: number, max: number, cpu: number, memory: number): void {
+    this.settings = { stepDelayMinMs: min, stepDelayMaxMs: max, stepCpuMs: cpu, stepMemoryMb: memory,
+      documentMinKb: this.settings?.documentMinKb ?? 200, documentMaxKb: this.settings?.documentMaxKb ?? 500 };
     this.saveSettings();
   }
 
@@ -420,7 +435,8 @@ export class AppComponent implements OnInit, OnDestroy {
     if (!this.settings) return;
     try {
       this.settings = await this.api.saveSettings(this.settings);
-      this.notify(`Tiempos: ${this.settings.stepDelayMinMs}–${this.settings.stepDelayMaxMs} ms por paso`);
+      const s = this.settings;
+      this.notify(`Por paso: espera ${s.stepDelayMinMs}–${s.stepDelayMaxMs} ms · CPU ${s.stepCpuMs} ms · ${s.stepMemoryMb} MB · documento ${s.documentMinKb}–${s.documentMaxKb} KB`);
     } catch (e) {
       this.notify(this.errorMessage(e), 'error');
     }

@@ -200,7 +200,24 @@ while true; do clear; date
 Ctrl+C para salir. Vista gráfica equivalente: dashboard CloudWatch `micro-test-lab`
 ([OBSERVABILIDAD.md](diagrams/OBSERVABILIDAD.md)).
 
-## 3. Duración de cada paso (configurable en vivo)
+## 3. Trabajo simulado por paso (configurable en vivo)
+
+Además de la espera, cada paso puede **consumir CPU real** (`step_cpu_ms`, 0–3000 ms de tiempo
+de CPU: si el nodo está saturado el paso tarda más) y **retener memoria** (`step_memory_mb`,
+0–64 MB). Default: 100 ms de CPU y 8 MB por paso. El **documento** se crea y se **firma de verdad**
+(SHA256withRSA) y pesa al azar entre `document_min_kb` y `document_max_kb` (default 200–500 KB):
+esa memoria y la transferencia S3 → CM son reales. Panel → *Trabajo por paso*, o por SQL:
+
+```bash
+echo "update process.lab_settings set step_delay_min_ms=500, step_delay_max_ms=3000, step_cpu_ms=200, step_memory_mb=16;" | sql
+```
+
+Con CPU > 0, más pods y nodos **sí** aceleran (KEDA reparte, Karpenter agrega vCPU). Para que
+los pods se repartan entre nodos, subir la CPU reservada del pod api:
+`API_CPU_REQUEST=500m IMAGE=$IMAGE aws/kubernetes/bootstrap.sh`. Calculadora: hoja
+*Drenaje de cola* del Excel (`aws/ESCENARIOS-LAB.xlsx`).
+
+### Espera por paso
 
 Antes de cada paso de negocio (documento, CM, Aseguradora) la API espera un tiempo
 aleatorio entre `step_delay_min_ms` y `step_delay_max_ms`. Se lee en cada llamada: el cambio

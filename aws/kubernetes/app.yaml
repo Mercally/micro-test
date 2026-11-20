@@ -95,8 +95,11 @@ spec:
             - { name: LAB_API_MAX_REPLICAS, value: "${API_MAX_REPLICAS}" }
             - { name: LAB_MESSAGES_PER_POD, value: "${API_MESSAGES_PER_POD}" }
             - { name: LAB_KARPENTER_CPU_LIMIT, value: "${KARPENTER_CPU_LIMIT}" }
+            - { name: LAB_API_CPU_REQUEST, value: "${API_CPU_REQUEST}" }
           resources:
-            requests: { cpu: 100m, memory: 384Mi }
+            # CPU request = what a pod really uses under simulated work (lab_settings.step_cpu_ms).
+            # Higher request -> fewer pods per node -> KEDA scale-out makes Karpenter add real CPU.
+            requests: { cpu: "${API_CPU_REQUEST}", memory: 384Mi }
             limits: { memory: 768Mi }
           startupProbe:                      # JVM start (~15 s)
             httpGet: { path: /actuator/health/liveness, port: http }
@@ -228,6 +231,27 @@ spec:
       route: [{ destination: { host: api.micro.svc.cluster.local, port: { number: 8080 } } }]
       timeout: 25s
       retries: { attempts: 0 }               # Step Functions owns retries; avoid multiplying them
+---
+# Load distribution at the Istio gateway (and any mesh client) towards api pods.
+# LEAST_REQUEST: each call goes to the pod with fewer requests in flight, not blindly round-robin.
+# warmupDurationSecs: a pod just added by KEDA gets traffic gradually while its JVM warms up.
+# Outlier detection only on local-origin failures (connect/reset): simulated 503s from lab faults
+# must not eject healthy pods.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata: { name: api, namespace: micro }
+spec:
+  host: api.micro.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_REQUEST
+      warmupDurationSecs: 30s
+    outlierDetection:
+      splitExternalLocalOriginErrors: true
+      consecutiveLocalOriginFailures: 3
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
 ---
 # ---------- authorization ----------
 # /internal/* requires the workflow credential (EventBridge Connection header). D07.
