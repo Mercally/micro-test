@@ -1,5 +1,6 @@
 package com.example.docssimulator.api;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import jakarta.validation.Valid;
@@ -29,6 +30,9 @@ public class PurchaseController {
             @RequestHeader(value = "X-Lab-Failure", required = false) String failure) {
         return ResponseEntity.accepted().body(purchases.accept(request, failure));
     }
+
+    @GetMapping("/purchases")
+    public List<Map<String, Object>> list(@RequestParam(defaultValue = "50") int limit) { return purchases.list(limit); }
 
     @GetMapping("/purchases/{saleId}")
     public Map<String, Object> status(@PathVariable UUID saleId) { return purchases.status(saleId); }

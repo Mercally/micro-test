@@ -14,10 +14,10 @@ export AWS_REGION="${AWS_REGION:-us-east-1}"
 CLUSTER=micro-test
 
 # Pinned chart versions. Verify support for the cluster's Kubernetes version before changing.
-LBC_CHART_VERSION="${LBC_CHART_VERSION:-1.14.0}"     # eks/aws-load-balancer-controller
-KARPENTER_VERSION="${KARPENTER_VERSION:-1.8.1}"      # oci://public.ecr.aws/karpenter/karpenter
-ISTIO_VERSION="${ISTIO_VERSION:-1.28.0}"             # istio/base, istio/istiod, istio/gateway
-KEDA_VERSION="${KEDA_VERSION:-2.18.0}"               # kedacore/keda
+LBC_CHART_VERSION="${LBC_CHART_VERSION:-3.6.3}"     # eks/aws-load-balancer-controller
+KARPENTER_VERSION="${KARPENTER_VERSION:-1.15.2}"      # oci://public.ecr.aws/karpenter/karpenter
+ISTIO_VERSION="${ISTIO_VERSION:-1.30.8}"             # istio/base, istio/istiod, istio/gateway
+KEDA_VERSION="${KEDA_VERSION:-2.21.1}"               # kedacore/keda
 
 # Lab knobs (see README "Perillas del laboratorio").
 export KARPENTER_CPU_LIMIT="${KARPENTER_CPU_LIMIT:-16}"
@@ -41,16 +41,17 @@ export APP_SG_ID; APP_SG_ID=$(imp micro-test-network-AppSecurityGroupId)
 export WORKLOAD_SUBNET_ID; WORKLOAD_SUBNET_ID=$(imp micro-test-network-AppSubnetIds | cut -d, -f1)
 export TARGET_GROUP_ARN; TARGET_GROUP_ARN=$(imp micro-test-ingress-IstioTargetGroupArn)
 export QUEUE_URL; QUEUE_URL=$(imp micro-test-messaging-QueueUrl)
+export DLQ_URL; DLQ_URL=$(imp micro-test-messaging-DeadLetterQueueUrl)
 export DOCUMENTS_BUCKET; DOCUMENTS_BUCKET=$(imp micro-test-data-DocumentsBucketName)
 VPC_ID=$(imp micro-test-network-VpcId)
 INTERRUPTION_QUEUE=$(out micro-test-eks KarpenterInterruptionQueueName)
 DB_SECRET_ARN=$(imp micro-test-data-DbSecretArn)
-for v in NODE_ROLE_NAME CLUSTER_SG_ID APP_SG_ID WORKLOAD_SUBNET_ID TARGET_GROUP_ARN QUEUE_URL \
+for v in NODE_ROLE_NAME CLUSTER_SG_ID APP_SG_ID WORKLOAD_SUBNET_ID TARGET_GROUP_ARN QUEUE_URL DLQ_URL \
          DOCUMENTS_BUCKET VPC_ID INTERRUPTION_QUEUE DB_SECRET_ARN; do need "$v"; done
 
 # Sync rule (aws/diagrams/ESCALADO.md): api pods never exceed what admitted executions can use.
 # MaxConcurrency (04) = busy Lambdas = running executions = concurrent API steps.
-MAX_CONCURRENCY=$(aws cloudformation describe-stacks --stack-name micro-test-messaging \
+export MAX_CONCURRENCY; MAX_CONCURRENCY=$(aws cloudformation describe-stacks --stack-name micro-test-messaging \
   --query "Stacks[0].Parameters[?ParameterKey=='MaxConcurrency'].ParameterValue" --output text)
 need MAX_CONCURRENCY
 export API_MAX_REPLICAS="${API_MAX_REPLICAS:-$(( (MAX_CONCURRENCY + API_MESSAGES_PER_POD - 1) / API_MESSAGES_PER_POD ))}"

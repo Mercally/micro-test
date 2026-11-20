@@ -27,7 +27,7 @@ Parameters:
     Default: micro-test-messaging
   KubernetesVersion:
     Type: String
-    Default: '1.35'
+    Default: '1.36'
     Description: 'Check: aws eks describe-cluster-versions --default-only --query "clusterVersions[].clusterVersion"'
   AdminCidr:
     Type: String
@@ -241,6 +241,18 @@ Resources:
               - Effect: Allow
                 Action: [kms:Decrypt, kms:GenerateDataKey]
                 Resource: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
+              # Test panel: queue depths, and DLQ redrive (message move task needs these on DLQ + source).
+              - Effect: Allow
+                Action: sqs:GetQueueAttributes
+                Resource:
+                  - { 'Fn::ImportValue': !Sub '${MessagingStack}-QueueArn' }
+                  - { 'Fn::ImportValue': !Sub '${MessagingStack}-DeadLetterQueueArn' }
+              - Effect: Allow
+                Action: [sqs:StartMessageMoveTask, sqs:ListMessageMoveTasks, sqs:ReceiveMessage, sqs:DeleteMessage]
+                Resource: { 'Fn::ImportValue': !Sub '${MessagingStack}-DeadLetterQueueArn' }
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: { 'Fn::ImportValue': !Sub '${MessagingStack}-QueueArn' }
 
   WorkerRole:
     Type: AWS::IAM::Role

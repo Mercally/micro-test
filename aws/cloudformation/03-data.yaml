@@ -1,8 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  micro-test AWS lab - 03 data. Aurora PostgreSQL Serverless v2 (min 0 ACU, auto-pause)
-  with one writer in workload AZ, own master secret without rotation (N17), Data API;
-  S3 bucket for documents.
+  micro-test AWS lab - 03 data. RDS PostgreSQL single-AZ (db.t4g.micro by default) in the
+  workload AZ, own master secret without rotation (N17); S3 bucket for documents.
 
 Parameters:
   Project:
@@ -17,21 +16,15 @@ Parameters:
     Default: micro-test-security
   EngineVersion:
     Type: String
-    Default: '16.6'
+    Default: '16'
     Description: >-
-      Must support 0 ACU (16.3+). Check: aws rds describe-db-engine-versions
-      --engine aurora-postgresql --query "DBEngineVersions[].EngineVersion"
-  MaxCapacity:
-    Type: Number
-    Default: 4
-    MinValue: 1
-    MaxValue: 64
-    Description: ACU ceiling. Part of the lab - the DB is one of the limits you measure.
-  SecondsUntilAutoPause:
-    Type: Number
-    Default: 600
-    MinValue: 300
-    MaxValue: 86400
+      Major version; RDS picks the default minor. Check: aws rds describe-db-engine-versions
+      --engine postgres --default-only --query "DBEngineVersions[].EngineVersion"
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedValues: [db.t4g.micro, db.t4g.small, db.t4g.medium, db.t4g.large]
+    Description: Lab knob - the DB is one of the limits you measure. Changing it restarts the DB (~5 min).
   DocumentRetentionDays:
     Type: Number
     Default: 30
@@ -40,7 +33,7 @@ Resources:
   DbSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: !Sub '${Project} Aurora (isolated subnets, both AZs required by RDS)'
+      DBSubnetGroupDescription: !Sub '${Project} RDS (isolated subnets, both AZs required by RDS)'
       SubnetIds: !Split [',', { 'Fn::ImportValue': !Sub '${NetworkStack}-DbSubnetIds' }]
 
   # Own secret WITHOUT rotation (decision N17): pods read it once at start; a rotating
@@ -48,7 +41,7 @@ Resources:
   DbSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Name: !Sub '${Project}/aurora/master'
+      Name: !Sub '${Project}/db/master'
       KmsKeyId: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
       GenerateSecretString:
         SecretStringTemplate: '{"username":"docs"}'
@@ -61,44 +54,36 @@ Resources:
     Type: AWS::SecretsManager::SecretTargetAttachment
     Properties:
       SecretId: !Ref DbSecret
-      TargetId: !Ref DbCluster
-      TargetType: AWS::RDS::DBCluster
+      TargetId: !Ref Db
+      TargetType: AWS::RDS::DBInstance
 
-  DbCluster:
-    Type: AWS::RDS::DBCluster
+  # ponytail: single-AZ RDS PostgreSQL (N23). Fixed size, no auto-pause; MultiAZ=true or Aurora
+  # Serverless v2 if failover or elastic capacity become part of the lab.
+  Db:
+    Type: AWS::RDS::DBInstance
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Snapshot
     Properties:
-      DBClusterIdentifier: !Sub '${Project}-aurora'
-      Engine: aurora-postgresql
+      DBInstanceIdentifier: !Sub '${Project}-db'
+      Engine: postgres
       EngineVersion: !Ref EngineVersion
-      DatabaseName: docs
+      DBInstanceClass: !Ref DbInstanceClass
+      DBName: docs
       MasterUsername: !Sub '{{resolve:secretsmanager:${DbSecret}:SecretString:username}}'
       MasterUserPassword: !Sub '{{resolve:secretsmanager:${DbSecret}:SecretString:password}}'
+      AllocatedStorage: '20'
+      StorageType: gp3
       StorageEncrypted: true
       KmsKeyId: { 'Fn::ImportValue': !Sub '${SecurityStack}-DataKeyArn' }
       DBSubnetGroupName: !Ref DbSubnetGroup
-      VpcSecurityGroupIds: [{ 'Fn::ImportValue': !Sub '${NetworkStack}-DbSecurityGroupId' }]
-      ServerlessV2ScalingConfiguration:
-        MinCapacity: 0
-        MaxCapacity: !Ref MaxCapacity
-        SecondsUntilAutoPause: !Ref SecondsUntilAutoPause
-      # Data API: run SQL from the Mac (aws rds-data) without VPN/bastion.
-      EnableHttpEndpoint: true
+      VPCSecurityGroups: [{ 'Fn::ImportValue': !Sub '${NetworkStack}-DbSecurityGroupId' }]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MultiAZ: false
+      PubliclyAccessible: false
       BackupRetentionPeriod: 1
+      AutoMinorVersionUpgrade: true
       DeletionProtection: false
       CopyTagsToSnapshot: true
-
-  # ponytail: single writer, no reader. Add a second db.serverless instance in AZ B for failover.
-  DbWriter:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      DBInstanceIdentifier: !Sub '${Project}-aurora-writer'
-      DBClusterIdentifier: !Ref DbCluster
-      DBInstanceClass: db.serverless
-      Engine: aurora-postgresql
-      AvailabilityZone: !Select [0, !GetAZs '']
-      PubliclyAccessible: false
 
   DocumentsBucket:
     Type: AWS::S3::Bucket
@@ -141,14 +126,13 @@ Resources:
             Condition: { Bool: { 'aws:SecureTransport': 'false' } }
 
 Outputs:
-  DbClusterArn:
-    Value: !GetAtt DbCluster.DBClusterArn
-    Export: { Name: !Sub '${AWS::StackName}-DbClusterArn' }
+  DbInstanceId:
+    Value: !Ref Db
   DbEndpoint:
-    Value: !GetAtt DbCluster.Endpoint.Address
+    Value: !GetAtt Db.Endpoint.Address
     Export: { Name: !Sub '${AWS::StackName}-DbEndpoint' }
   DbPort:
-    Value: !GetAtt DbCluster.Endpoint.Port
+    Value: !GetAtt Db.Endpoint.Port
     Export: { Name: !Sub '${AWS::StackName}-DbPort' }
   DbSecretArn:
     Value: !Ref DbSecret

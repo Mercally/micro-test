@@ -281,7 +281,7 @@ Resources:
             Parameters:
               QueueUrl: ${QueueUrl}
               ReceiptHandle.$: $.receiptHandle
-            ResultPath: null
+            ResultPath: $.deleted
             Retry:
             - ErrorEquals:
               - States.ALL
@@ -386,7 +386,7 @@ Resources:
               QueueUrl: ${QueueUrl}
               ReceiptHandle.$: $.receiptHandle
               VisibilityTimeout.$: $.releaseDelaySeconds
-            ResultPath: null
+            ResultPath: $.released
             Catch:
             - ErrorEquals:
               - States.ALL
@@ -570,6 +570,10 @@ Outputs:
     Export: { Name: !Sub '${AWS::StackName}-QueueName' }
   DeadLetterQueueUrl:
     Value: !Ref DeadLetterQueue
+    Export: { Name: !Sub '${AWS::StackName}-DeadLetterQueueUrl' }
+  DeadLetterQueueArn:
+    Value: !GetAtt DeadLetterQueue.Arn
+    Export: { Name: !Sub '${AWS::StackName}-DeadLetterQueueArn' }
   StateMachineArn:
     Value: !GetAtt StateMachine.Arn
   ConnectionArn:

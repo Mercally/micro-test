@@ -10,12 +10,13 @@ Revisión con change sets, fallos y rollback: [CLOUDFORMATION.md](../CLOUDFORMAT
 | 00 | `00-dns.yaml` | `micro-test-dns` | — | No | **Sí**: nameservers de `mercally.dev` en Hostinger ([DNS.md](../DNS.md)) | ~$1/mes (2 zonas) |
 | 01 | `01-network.yaml` | `micro-test-network` | — | No | No | NAT ~$33/mes + datos |
 | 02 | `02-security.yaml` | `micro-test-security` | — | No | No | KMS ~$1/mes |
-| 03 | `03-data.yaml` | `micro-test-data` | 01, 02 | No | Verificar versión Aurora | Aurora pausado: solo almacenamiento; secreto ~$0.40/mes |
+| 03 | `03-data.yaml` | `micro-test-data` | 01, 02 | No | Plan de cuenta pagado | RDS db.t4g.micro ~$12/mes + gp3 20 GiB ~$2; secreto ~$0.40/mes |
 | 04 | `04-messaging.yaml` | `micro-test-messaging` | 02 | **Sí** | Generar `WorkflowApiKey` | Secreto Connection ~$0.40/mes; resto por uso |
 | 05 | `05-eks.yaml` | `micro-test-eks` | 01, 02, 03, 04 | **Sí** | IP pública para kubectl | Control plane ~$73/mes + 2× t4g.medium ~$49/mes + EBS ~$3 |
 | 06 | `06-ingress.yaml` | `micro-test-ingress` | 00 (delegación verificada), 01 | No | Actualizar 04 con sus Outputs | NLB ~$16/mes + LCU; Resource Gateway por hora/GB (verificar); API GW por request |
 | 07 | `07-frontend.yaml` | `micro-test-frontend` | 06 | No | Build + subir Angular | Centavos: CloudFront y S3 por uso |
 | 08 | `08-observability.yaml` | `micro-test-observability` | 04, 05, 06 | No | — | Dashboard ~$3/mes; Application Signals y Container Insights por uso |
+| 09 | `09-registry.yaml` | `micro-test-registry` | — (cualquier momento antes de subir la imagen) | No | — | ECR ~$0.10/GB-mes (últimas 10 imágenes) |
 
 Sin costos ocultos: 00 y 02 retienen sus recursos al borrar (ver Eliminación).
 
@@ -81,26 +82,30 @@ aws cloudformation deploy --stack-name micro-test-security \
   --template-file aws/cloudformation/02-security.yaml
 ```
 
-## 03 — Aurora y S3 temporal
+## 03 — RDS PostgreSQL y S3 temporal
+
+RDS PostgreSQL single-AZ `db.t4g.micro` (N23). La cuenta debe estar en **plan pagado**:
+el Free plan bloquea este diseño (Aurora solo con express configuration, sin VPC Lattice).
 
 ```bash
-aws rds describe-db-engine-versions --engine aurora-postgresql \
-  --query "DBEngineVersions[?starts_with(EngineVersion,'16.')].EngineVersion" --output text
+aws rds describe-db-engine-versions --engine postgres --default-only \
+  --query "DBEngineVersions[].EngineVersion" --output text
 
 aws cloudformation deploy --stack-name micro-test-data \
   --template-file aws/cloudformation/03-data.yaml
 ```
 
-Tarda ~10–15 min. Prueba sin red privada (Data API; despierta Aurora si está pausada):
+La primera línea debe mostrar una versión `16.x`; si la versión por defecto ya no es 16,
+desplegar igual (el parámetro `EngineVersion=16` fija la mayor). Tarda ~10 min. Verificar:
 
 ```bash
-CLUSTER=$(aws cloudformation describe-stacks --stack-name micro-test-data \
-  --query "Stacks[0].Outputs[?OutputKey=='DbClusterArn'].OutputValue" --output text)
-SECRET=$(aws cloudformation describe-stacks --stack-name micro-test-data \
-  --query "Stacks[0].Outputs[?OutputKey=='DbSecretArn'].OutputValue" --output text)
-aws rds-data execute-statement --resource-arn "$CLUSTER" --secret-arn "$SECRET" \
-  --database docs --sql "select version()"
+aws rds describe-db-instances --db-instance-identifier micro-test-db \
+  --query "DBInstances[0].[DBInstanceStatus,EngineVersion,DBInstanceClass,AvailabilityZone]" --output text
 ```
+
+Debe mostrar `available`. RDS no tiene Data API: la prueba SQL real ocurre cuando arrancan
+los pods (bootstrap). Para cambiar el tamaño (perilla del lab): redeploy con
+`--parameter-overrides DbInstanceClass=db.t4g.small` (reinicio ~5 min).
 
 ## 04 — Mensajería
 
@@ -165,10 +170,10 @@ Pod Identity creado (las service accounts las crean después Helm/manifiestos):
 
 | Namespace / ServiceAccount | Permisos |
 |---|---|
-| `micro/api` | S3 `tmp/*` get/put/delete + list bucket; secreto Aurora; KMS |
-| `micro/worker` | `sqs:SendMessage` cola principal; `s3:ListBucket` (HeadBucket al arrancar); secreto Aurora; KMS |
-| `micro/mocks` | `s3:ListBucket` (HeadBucket al arrancar); secreto Aurora; KMS |
-| `keda/keda-operator` | `sqs:GetQueueAttributes`; secreto Aurora (scaler outbox); KMS |
+| `micro/api` | S3 `tmp/*` get/put/delete + list bucket; secreto BD; KMS |
+| `micro/worker` | `sqs:SendMessage` cola principal; `s3:ListBucket` (HeadBucket al arrancar); secreto BD; KMS |
+| `micro/mocks` | `s3:ListBucket` (HeadBucket al arrancar); secreto BD; KMS |
+| `keda/keda-operator` | `sqs:GetQueueAttributes`; secreto BD (scaler outbox); KMS |
 | `kube-system/aws-load-balancer-controller` | Solo TargetGroupBinding: describe + register/deregister en target groups `micro-test-*` |
 | `kube-system/karpenter` | Lanzar/terminar sus nodos, PassRole del node role, perfiles de instancia, cola de interrupciones |
 
@@ -186,7 +191,7 @@ aws cloudformation describe-stacks --stack-name micro-test-ingress \
 
 Crea: certificado ACM `api-internal.aws.mercally.dev` (validación DNS automática), registro
 A alias → NLB interno, NLB con listener TLS 443 → target group IP puerto 8080 (Istio gateway,
-health check `15021/healthz/ready`), API Gateway HTTP con 3 rutas públicas y throttling
+health check `15021/healthz/ready`), API Gateway HTTP con 4 rutas públicas (crear, listar, consultar, reintentar) y throttling
 10 rps / burst 20, Resource Gateway + Resource Configuration (VPC Lattice).
 
 El target group queda **sin targets** hasta el bootstrap Kubernetes (TargetGroupBinding
@@ -252,6 +257,7 @@ Antes de borrar 05: eliminar NodePools de Karpenter y esperar que sus nodos term
 
 ```bash
 aws s3 rm "s3://micro-test-frontend-$(aws sts get-caller-identity --query Account --output text)-us-east-1" --recursive
+aws cloudformation delete-stack --stack-name micro-test-registry
 aws cloudformation delete-stack --stack-name micro-test-observability
 aws cloudformation delete-stack --stack-name micro-test-frontend
 aws cloudformation deploy --stack-name micro-test-messaging --template-file aws/cloudformation/04-messaging.yaml \
@@ -267,5 +273,5 @@ aws cloudformation delete-stack --stack-name micro-test-dns
 
 Esperar cada uno con `aws cloudformation wait stack-delete-complete --stack-name <stack>`.
 El bucket de documentos debe estar vacío para borrar 03. Recursos retenidos a revisar
-manualmente si ya no se usan: snapshot de Aurora, llave KMS (programar borrado, 7–30 días)
+manualmente si ya no se usan: snapshot de RDS, llave KMS (programar borrado, 7–30 días)
 y zona Route 53.

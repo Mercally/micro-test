@@ -14,7 +14,7 @@ flowchart LR
   CF -->|/api/*| APIGW[API Gateway<br/>sin auth, throttling]
   APIGW --> VL[VPC Link] --> NLB[NLB interno TLS]
   NLB --> IG[Istio gateway] --> API[api pods]
-  API --> DB[(Aurora PostgreSQL)]
+  API --> DB[(RDS PostgreSQL)]
   WK[worker pods<br/>outbox publisher] --> DB
   WK --> Q[[SQS + DLQ]]
   Q -->|ESM| L[Lambda consumidora]
@@ -39,6 +39,7 @@ flowchart LR
 | Ver componentes, fronteras de seguridad y requisitos IaC | [diagrams/ARQUITECTURA-C4.md](diagrams/ARQUITECTURA-C4.md) |
 | Entender el flujo asíncrono y los reintentos | [diagrams/SECUENCIA-ASYNC.md](diagrams/SECUENCIA-ASYNC.md) |
 | Configurar y sincronizar Lambda, KEDA, HPA y Karpenter | [diagrams/ESCALADO.md](diagrams/ESCALADO.md) |
+| Lanzar carga (N ventas, misma venta, paralelo) y observar por CLI | [CARGA.md](CARGA.md) + [load.sh](load.sh) |
 | Saber qué ver en CloudWatch | [diagrams/OBSERVABILIDAD.md](diagrams/OBSERVABILIDAD.md) |
 | Revisar change sets y validación genérica | [CLOUDFORMATION.md](CLOUDFORMATION.md) |
 | Fundamentos y alternativas del diseño original | [ARCHITECTURE.md](ARCHITECTURE.md) (histórico) |

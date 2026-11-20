@@ -30,7 +30,7 @@ flowchart LR
 | Pregunta | Dónde | Origen |
 |---|---|---|
 | ¿Qué endpoint de la API es lento o falla? | Application Signals → Services → `api` → Operations | Agente ADOT (sin cambios de código) |
-| ¿A quién llama la API y cuánto tarda (mocks, S3, Aurora)? | Application Signals → Service map; trazas en X-Ray | Agente ADOT |
+| ¿A quién llama la API y cuánto tarda (mocks, S3, PostgreSQL)? | Application Signals → Service map; trazas en X-Ray | Agente ADOT |
 | ¿Cuántos pods y nodos hay, cuánta CPU usan? | Container Insights; dashboard paneles 7–8 | CloudWatch agent |
 | ¿Qué pasó con una venta concreta? | Logs Insights sobre `/aws/containerinsights/micro-test/application` filtrando `saleId` | Fluent Bit (logs `process_step`, `outbox_published`) |
 | ¿Dónde se detuvo el workflow? | Step Functions → ejecución `messageId-receiveCount`; log group `/aws/vendedlogs/states/micro-test-purchase` | Step Functions |

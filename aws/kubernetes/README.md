@@ -32,12 +32,21 @@ Termina en `VALIDATION OK`. Ejecutarlo tras cambiar manifiestos o versiones de c
 ## 1. Imagen arm64 en tu ECR
 
 Los nodos son Graviton: la imagen debe ser `linux/arm64` (nativa en Mac Apple Silicon).
+El repositorio lo crea el stack 09 (una vez):
 
 ```bash
-ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-REPO=<tu-repositorio-ecr>
-TAG=$(git rev-parse --short HEAD)
-export IMAGE=$ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/$REPO:$TAG
+aws cloudformation deploy --stack-name micro-test-registry \
+  --template-file aws/cloudformation/09-registry.yaml
+```
+
+Build y push (cada vez que cambie el código). El tag lleva commit + fecha para distinguir
+builds con cambios sin commitear:
+
+```bash
+REPO_URI=$(aws cloudformation describe-stacks --stack-name micro-test-registry \
+  --query "Stacks[0].Outputs[?OutputKey=='RepositoryUri'].OutputValue" --output text)
+export IMAGE=$REPO_URI:$(git rev-parse --short HEAD)-$(date +%Y%m%d%H%M)
+echo "$IMAGE"
 
 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "${IMAGE%%/*}"
 docker build --platform linux/arm64 -t "$IMAGE" .
@@ -90,9 +99,10 @@ También desde la UI: `$SITE` con URL base `/api/v1`.
 | `MaxConcurrency` | 04-messaging | Ejecuciones simultáneas que entran a Step Functions |
 | `ConsumerEnabled` | 04-messaging | `false`: la cola acumula; `true`: drena |
 | `ThrottlingRateLimit` / `ThrottlingBurstLimit` | 06-ingress | Tasa máxima de compras por la API pública |
-| `MaxCapacity` | 03-data | Techo de ACU de Aurora |
+| `DbInstanceClass` | 03-data | Tamaño de RDS PostgreSQL (reinicio ~5 min al cambiar) |
 | `API_MAX_REPLICAS`, `API_MESSAGES_PER_POD` | bootstrap.sh | Pods de api y mensajes SQS por pod antes de escalar |
 | `KARPENTER_CPU_LIMIT` | bootstrap.sh | vCPU máximas que Karpenter puede lanzar |
+| `step_delay_min_ms`, `step_delay_max_ms` | tabla `process.lab_settings` (SQL, en vivo) | Espera aleatoria antes de cada paso de negocio; default 0–10000 ms ([CARGA.md](../CARGA.md)) |
 | `MOCKS_FAILURE_PROBABILITY`, `MOCKS_LATENCY_MS` | bootstrap.sh | Fallos raros y lentitud de CM/Aseguradora |
 
 ## Simular fallos
@@ -109,22 +119,13 @@ Pasos válidos para `X-Lab-Failure`: `document`, `cm`, `insurer`.
 
 ## Carga y escalado
 
-```bash
-for i in $(seq 1 200); do
-  curl -s -o /dev/null -w '%{http_code} ' -X POST "$SITE/api/v1/purchases" -H 'Content-Type: application/json' \
-    -d "{\"externalReference\":\"LOAD-$i-$RANDOM\",\"customerName\":\"Lab\",\"customerEmail\":\"lab@example.com\",\"productCode\":\"AUTO-01\"}"
-done; echo
-```
+Panel de pruebas en la UI (CloudFront): escenarios de fallo, ráfagas, DLQ y vista en vivo de
+cola, pods, HPA y nodos. El pod `api` lee Kubernetes con RBAC de solo lectura (`lab-panel-view`
+en `micro`, `micro-lab-panel-nodes` para nodos) y SQS con su rol Pod Identity.
 
-Observar en paralelo (429 = throttling de la API pública, es esperado):
-
-```bash
-kubectl get nodes -L karpenter.sh/capacity-type,node.kubernetes.io/instance-type -w
-kubectl -n micro get hpa,pods -w
-aws sqs get-queue-attributes --queue-url "$(aws cloudformation list-exports \
-  --query "Exports[?Name=='micro-test-messaging-QueueUrl'].Value" --output text)" \
-  --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible
-```
+Generador `aws/load.sh` (N ventas distintas o la misma, secuencial con pausa o en paralelo,
+fallos inducidos) y comandos de observación (cola, Step Functions, pods, nodos, SQL, RPS):
+[CARGA.md](../CARGA.md).
 
 ## Detener (sin borrar)
 
@@ -133,8 +134,7 @@ kubectl -n micro annotate scaledobject api autoscaling.keda.sh/paused-replicas=0
 kubectl -n micro scale deploy/worker deploy/mocks --replicas=0
 ```
 
-Sin pods de la app, Karpenter consolida y elimina sus nodos (~1 min) y Aurora puede
-pausarse (requiere cero conexiones). Siguen cobrando: control plane EKS, nodos base, NAT
+Sin pods de la app, Karpenter consolida y elimina sus nodos (~1 min) . Siguen cobrando: control plane EKS, nodos base, RDS (no se pausa), NAT
 y NLB. Para reanudar: quitar la anotación (`autoscaling.keda.sh/paused-replicas-`) y
 escalar worker/mocks a 1. Para eliminar todo: ver orden de eliminación del runbook.
 

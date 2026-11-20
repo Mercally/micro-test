@@ -12,6 +12,33 @@ apiVersion: v1
 kind: ServiceAccount
 metadata: { name: api, namespace: micro }
 ---
+# Test panel reads (never writes) deployments, pods and HPAs in micro, and nodes cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: lab-panel-view, namespace: micro }
+rules:
+  - { apiGroups: [apps], resources: [deployments], verbs: [list] }
+  - { apiGroups: [""], resources: [pods], verbs: [list] }
+  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: lab-panel-view, namespace: micro }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: lab-panel-view }
+subjects: [{ kind: ServiceAccount, name: api, namespace: micro }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: micro-lab-panel-nodes }
+rules:
+  - { apiGroups: [""], resources: [nodes], verbs: [list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: micro-lab-panel-nodes }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: micro-lab-panel-nodes }
+subjects: [{ kind: ServiceAccount, name: api, namespace: micro }]
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata: { name: worker, namespace: micro }
@@ -60,10 +87,18 @@ spec:
             - secretRef: { name: db }
           env:
             - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=75" }   # in env: the agent injector appends to it
+            # Test panel (UI): queues, pods/nodes (RBAC below), burst, DLQ redrive; limits are shown read-only.
+            - { name: LAB_PANEL_ENABLED, value: "true" }
+            - { name: LAB_QUEUE_URL, value: "${QUEUE_URL}" }
+            - { name: LAB_DLQ_URL, value: "${DLQ_URL}" }
+            - { name: LAB_MAX_CONCURRENCY, value: "${MAX_CONCURRENCY}" }
+            - { name: LAB_API_MAX_REPLICAS, value: "${API_MAX_REPLICAS}" }
+            - { name: LAB_MESSAGES_PER_POD, value: "${API_MESSAGES_PER_POD}" }
+            - { name: LAB_KARPENTER_CPU_LIMIT, value: "${KARPENTER_CPU_LIMIT}" }
           resources:
             requests: { cpu: 100m, memory: 384Mi }
             limits: { memory: 768Mi }
-          startupProbe:                      # JVM start + Aurora resume from pause (~15 s)
+          startupProbe:                      # JVM start (~15 s)
             httpGet: { path: /actuator/health/liveness, port: http }
             periodSeconds: 5
             failureThreshold: 36
@@ -116,7 +151,7 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 384Mi }
             limits: { memory: 768Mi }
-          startupProbe:                      # JVM start + Aurora resume from pause (~15 s)
+          startupProbe:                      # JVM start (~15 s)
             httpGet: { path: /actuator/health/liveness, port: http }
             periodSeconds: 5
             failureThreshold: 36
@@ -163,7 +198,7 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 384Mi }
             limits: { memory: 768Mi }
-          startupProbe:                      # JVM start + Aurora resume from pause (~15 s)
+          startupProbe:                      # JVM start (~15 s)
             httpGet: { path: /actuator/health/liveness, port: http }
             periodSeconds: 5
             failureThreshold: 36

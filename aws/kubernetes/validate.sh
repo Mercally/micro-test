@@ -33,7 +33,8 @@ for ns in istio-system istio-ingress micro keda; do kubectl create namespace "$n
 export NODE_ROLE_NAME=micro-test-node-role CLUSTER_SG_ID=sg-0123456789abcdef0 APP_SG_ID=sg-0fedcba9876543210 \
   WORKLOAD_SUBNET_ID=subnet-0123456789abcdef0 AWS_REGION=us-east-1 KARPENTER_CPU_LIMIT=16 \
   TARGET_GROUP_ARN=arn:aws:elasticloadbalancing:us-east-1:111122223333:targetgroup/micro-test-istio/0123456789abcdef \
-  QUEUE_URL=https://sqs.us-east-1.amazonaws.com/111122223333/micro-test-purchases \
+  QUEUE_URL=https://sqs.us-east-1.amazonaws.com/111122223333/micro-test-purchases MAX_CONCURRENCY=2 \
+  DLQ_URL=https://sqs.us-east-1.amazonaws.com/111122223333/micro-test-purchases-dlq \
   DOCUMENTS_BUCKET=micro-test-documents IMAGE=111122223333.dkr.ecr.us-east-1.amazonaws.com/micro:test \
   API_MAX_REPLICAS=1 API_MESSAGES_PER_POD=8 MOCKS_FAILURE_PROBABILITY=0.02 MOCKS_LATENCY_MS=0 WORKFLOW_KEY=dummy
 render() { python3 -c 'import os,string,sys; sys.stdout.write(string.Template(sys.stdin.read()).substitute(os.environ))' < "$1"; }

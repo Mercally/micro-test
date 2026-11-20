@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 09 registry. ECR repository for the single app image (api, worker
+  and mocks run the same image). Independent of the other stacks: deploy any time before
+  pushing the image (aws/kubernetes/README.md section 1). EKS nodes pull it with
+  AmazonEC2ContainerRegistryReadOnly (05).
+
+Parameters:
+  Project:
+    Type: String
+    Default: micro-test
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  KeepImages:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    Description: Most recent images kept; older ones expire (storage ~$0.10/GB-month).
+
+Resources:
+  # ponytail: MUTABLE tags and AES256 (no KMS key calls). IMMUTABLE + KMS if images get promoted
+  # between environments.
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${Project}/app'
+      ImageTagMutability: MUTABLE
+      ImageScanningConfiguration: { ScanOnPush: true }
+      EncryptionConfiguration: { EncryptionType: AES256 }
+      EmptyOnDelete: true
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {"rules":[{"rulePriority":1,"description":"keep last ${KeepImages}",
+            "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":${KeepImages}},
+            "action":{"type":"expire"}}]}
+
+Outputs:
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+    Export: { Name: !Sub '${AWS::StackName}-RepositoryUri' }

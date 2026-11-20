@@ -2,8 +2,10 @@ package com.example.docssimulator.service;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import com.example.docssimulator.api.PurchaseException;
 import com.example.docssimulator.api.Requests;
@@ -11,6 +13,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -67,8 +70,8 @@ public class PurchaseService {
             String[] parts = failure.split(":");
             if (parts.length != 3 || !java.util.Set.of("document", "policy", "upload", "completePolicy", "release", "cm", "insurer").contains(parts[0])
                     || !java.util.Set.of("transient", "permanent").contains(parts[1])
-                    || !parts[2].matches("[1-3]")) {
-                throw new PurchaseException(400, "INVALID_LAB_FAULT", "Ejemplo: document:transient:2 o upload:permanent:1");
+                    || !parts[2].matches("[1-9]|1[0-9]|20")) {
+                throw new PurchaseException(400, "INVALID_LAB_FAULT", "Ejemplo: cm:transient:2 o insurer:permanent:1 (veces 1-20)");
             }
             db.update("INSERT INTO endpoint0.lab_faults(event_id,step,remaining,permanent) VALUES (?,?,?,?)",
                     eventId, parts[0], Integer.parseInt(parts[2]), "permanent".equals(parts[1]));
@@ -97,12 +100,44 @@ public class PurchaseService {
                 """, saleId));
         result.put("steps", db.queryForList(
                 "SELECT step,outcome,reference,completed_at FROM process.steps WHERE sale_id=? ORDER BY completed_at", saleId));
+        result.put("history", db.queryForList(HISTORY + " WHERE sale_id=? ORDER BY id", saleId));
         var releases = db.queryForList("SELECT document_id,object_key,released_at FROM endpoint5.document_releases WHERE sale_id=?", saleId);
         if (!releases.isEmpty()) {
             result.put("document", releases.get(0));
             result.put("downloadUrl", storage.createDownloadUrl(releases.get(0).get("object_key").toString()));
         }
         return result;
+    }
+
+    private static final String HISTORY = """
+            SELECT sale_id,step,outcome,detail,delay_ms AS "delayMs",duration_ms AS "durationMs",
+              started_at AS "startedAt",finished_at AS "finishedAt" FROM process.history""";
+
+    /**
+     * Latest sales with outbox events and step attempts, for the UI tree. REPEATABLE READ: the three
+     * queries see the same snapshot, so the same "latest N" ids even while sales keep arriving.
+     */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public List<Map<String, Object>> list(int limit) {
+        int n = Math.max(1, Math.min(200, limit));
+        String latest = "(SELECT id FROM endpoint0.sales ORDER BY created_at DESC LIMIT ?)";
+        var sales = db.queryForList("""
+                SELECT id AS "saleId",external_reference AS "externalReference",status,generation,
+                  last_error AS error,created_at AS "createdAt",updated_at AS "updatedAt"
+                FROM endpoint0.sales ORDER BY created_at DESC LIMIT ?""", n);
+        var outbox = bySale(db.queryForList("""
+                SELECT sale_id,generation,created_at AS "createdAt",published_at AS "publishedAt",attempts,
+                  last_error AS error FROM endpoint0.outbox WHERE sale_id IN """ + latest + " ORDER BY generation", n));
+        var history = bySale(db.queryForList(HISTORY + " WHERE sale_id IN " + latest + " ORDER BY id", n));
+        for (var sale : sales) {
+            sale.put("outbox", outbox.getOrDefault(sale.get("saleId"), List.of()));
+            sale.put("history", history.getOrDefault(sale.get("saleId"), List.of()));
+        }
+        return sales;
+    }
+
+    private static Map<Object, List<Map<String, Object>>> bySale(List<Map<String, Object>> rows) {
+        return rows.stream().collect(Collectors.groupingBy(row -> row.remove("sale_id")));
     }
 
     @Transactional

@@ -1,7 +1,7 @@
 package com.example.docssimulator.config;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -11,7 +11,7 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 
 /** SQS client for the outbox worker only. Credentials: default chain (Pod Identity on EKS). */
 @Configuration
-@ConditionalOnProperty(name = "app.worker.enabled", havingValue = "true")
+@ConditionalOnExpression("${app.worker.enabled:false} or ${app.lab.panel.enabled:false}")
 public class AwsSqsConfiguration {
 
     @Bean

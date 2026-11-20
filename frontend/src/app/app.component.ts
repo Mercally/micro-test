@@ -1,20 +1,35 @@
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { SaleRequest, SaleStatus, SalesApiService } from './sales-api.service';
+import { LabSettings, OutboxEvent, SaleView, SalesApiService, StepAttempt, SystemView } from './sales-api.service';
 
-interface SaleRow {
-  saleId: string;
-  externalReference: string;
-  status: string;
-  updatedAt?: string;
-  error?: string | null;
-  downloadUrl?: string;
+interface TreeGeneration {
+  event: OutboxEvent;
+  attempts: StepAttempt[];
 }
 
-const SALES_KEY = 'micro-test.sales';
-const API_URL_KEY = 'micro-test.api-url';
+interface Scenario {
+  step: '' | 'document' | 'cm' | 'insurer';
+  kind: 'transient' | 'permanent';
+  times: number;
+}
+
+interface Preset extends Scenario {
+  name: string;
+}
+
+/** Must match 04-messaging: 1 + MaxAttempts(2) per step, MaxReceiveCount 3, ReleaseDelaySeconds 30. */
+const STEP_ATTEMPTS = 3;
+const DELIVERIES = 3;
+const RELEASE_DELAY_S = 30;
+const STEP_LABELS: Record<string, string> = {
+  document: '1 · Documento firmado → S3 temporal',
+  cm: '2 · Content Manager',
+  insurer: '3 · Aseguradora',
+  cleanup: 'Limpieza del archivo temporal',
+  fail: 'Marcar venta fallida'
+};
 
 @Component({
   selector: 'app-root',
@@ -24,253 +39,500 @@ const API_URL_KEY = 'micro-test.api-url';
     <main class="page-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">LABORATORIO LOCAL</p>
-          <h1>Ventas</h1>
-          <p class="subtitle">Crea una venta y sigue su procesamiento asíncrono.</p>
+          <p class="eyebrow">LABORATORIO AWS</p>
+          <h1>Panel de pruebas</h1>
+          <p class="subtitle">Configura escenarios de fallo y carga, y observa quién reacciona: colas, Step Functions, KEDA y Karpenter.</p>
         </div>
-        <span class="auth-badge"><span></span> JWT protegido</span>
+        <span class="live-badge" [class.off]="!autoRefresh"><span></span>{{ autoRefresh ? 'En vivo · 3 s' : 'Pausado' }}</span>
       </header>
 
-      <section class="config-card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">CONEXIÓN</p>
-            <h2>API Gateway y autenticación</h2>
-          </div>
-          <span class="local-badge">LocalStack</span>
-        </div>
-        <div class="config-grid">
-          <label class="field">
-            <span>URL base de API Gateway</span>
-            <input [(ngModel)]="apiUrl" (change)="saveApiUrl()"
-              placeholder="/api/v1 (AWS) o http://127.0.0.1:4566/_aws/execute-api/<api-id>/lab">
-            <small>AWS: <code>/api/v1</code>. LocalStack: copia <code>&#64;baseUrl</code> desde <code>localstack/.state/business/purchase.http</code>.</small>
-          </label>
-          <label class="field">
-            <span>JWT de práctica (solo LocalStack)</span>
-            <input [(ngModel)]="token" type="password" autocomplete="off"
-              placeholder="Pega el valor de @token, sin la palabra Bearer">
-            <small>Se conserva solo en memoria; no se guarda en el navegador.</small>
-          </label>
-        </div>
+      <!-- ===== Sistema en vivo ===== -->
+      <section class="metrics" *ngIf="system as s; else systemPending">
+        <article class="metric">
+          <p class="eyebrow">COLA PRINCIPAL</p>
+          <ng-container *ngIf="s.queues.main.error; else mainOk"><small class="row-error">{{ s.queues.main.error }}</small></ng-container>
+          <ng-template #mainOk>
+            <strong>{{ s.queues.main.visible }}</strong><span class="unit">visibles</span>
+            <p class="muted">{{ s.queues.main.inFlight }} en proceso · {{ s.queues.main.delayed }} retrasados</p>
+          </ng-template>
+        </article>
+        <article class="metric" [class.alert]="(s.queues.dlq.visible ?? 0) > 0">
+          <p class="eyebrow">DLQ</p>
+          <ng-container *ngIf="s.queues.dlq.error; else dlqOk"><small class="row-error">{{ s.queues.dlq.error }}</small></ng-container>
+          <ng-template #dlqOk>
+            <strong>{{ s.queues.dlq.visible }}</strong><span class="unit">mensajes</span>
+            <p class="muted">{{ s.queues.dlq.name }}</p>
+            <button class="check-button" type="button" (click)="redrive()" [disabled]="!s.queues.dlq.visible || busy">Redrive → cola principal</button>
+          </ng-template>
+        </article>
+        <article class="metric">
+          <p class="eyebrow">OUTBOX · EN CURSO</p>
+          <strong>{{ s.outboxPending }}</strong><span class="unit">por publicar</span>
+          <p class="muted">{{ s.running }} pasos ejecutándose ahora</p>
+        </article>
+        <article class="metric">
+          <p class="eyebrow">PODS (KEDA)</p>
+          <ng-container *ngIf="s.kubernetes.available; else noK8s">
+            <p class="pod-line" *ngFor="let d of s.kubernetes.deployments">
+              <span class="node-title">{{ d.name }}</span> {{ d.ready }}/{{ d.desired }}
+              <span class="status processing" *ngIf="s.kubernetes.pendingPods?.[d.name]">{{ s.kubernetes.pendingPods?.[d.name] }} pending</span>
+            </p>
+            <p class="muted" *ngFor="let h of s.kubernetes.hpa">HPA {{ h.name }}: {{ h.current }} → {{ h.desired }} (máx {{ h.max }})</p>
+          </ng-container>
+        </article>
+        <article class="metric">
+          <p class="eyebrow">NODOS (KARPENTER)</p>
+          <ng-container *ngIf="s.kubernetes.available; else noK8s">
+            <strong>{{ s.kubernetes.nodes?.length }}</strong><span class="unit">nodos</span>
+            <p class="muted" *ngFor="let g of nodeGroups(s)">{{ g }}</p>
+          </ng-container>
+        </article>
+        <article class="metric">
+          <p class="eyebrow">VENTAS</p>
+          <p class="totals"><span *ngFor="let e of entries(s.sales)" class="status" [ngClass]="statusClass(e.key)">{{ e.key }} {{ e.value }}</span></p>
+        </article>
+        <article class="metric wide">
+          <p class="eyebrow">LÍMITES (PRESUPUESTO)</p>
+          <p class="muted">Ejecuciones simultáneas (Lambda/Step Functions): <b>{{ s.limits['maxConcurrency'] }}</b> ·
+            pods api máx: <b>{{ s.limits['apiMaxReplicas'] }}</b> ({{ s.limits['messagesPerPod'] }} msg/pod) ·
+            vCPU Karpenter máx: <b>{{ s.limits['karpenterCpuLimit'] }}</b> ·
+            intentos por paso: {{ s.limits['stepAttempts'] }} · entregas SQS: {{ s.limits['deliveries'] }}</p>
+          <p class="muted">Se cambian por CLI (stack 04 <code>MaxConcurrency</code>; <code>bootstrap.sh</code> para pods y vCPU). Ver CARGA.md y ESCALADO.md.</p>
+        </article>
+        <ng-template #noK8s><p class="muted">{{ s.kubernetes.error || 'Sin acceso a Kubernetes' }}</p></ng-template>
       </section>
+      <ng-template #systemPending><section class="metrics"><article class="metric wide"><p class="muted">{{ systemError || 'Consultando sistema…' }}</p></article></section></ng-template>
 
       <section class="content-grid">
-        <section class="card sale-form-card">
+        <!-- ===== Escenario ===== -->
+        <section class="card">
           <div class="section-heading">
-            <div>
-              <p class="eyebrow">NUEVA OPERACIÓN</p>
-              <h2>Crear venta</h2>
-            </div>
+            <div><p class="eyebrow">ESCENARIO</p><h2>Fallos y carga</h2></div>
             <span class="step-number">01</span>
           </div>
-          <form (ngSubmit)="createSale()" #saleForm="ngForm">
+          <div class="presets">
+            <button *ngFor="let p of presets" type="button" class="chip" [class.active]="isPreset(p)" (click)="apply(p)">{{ p.name }}</button>
+          </div>
+          <div class="form-grid">
             <label class="field">
-              <span>Referencia externa</span>
-              <input name="externalReference" [(ngModel)]="draft.externalReference"
-                required maxlength="120" placeholder="Ej. WEB-2026-001">
+              <span>Paso que falla</span>
+              <select [(ngModel)]="scenario.step">
+                <option value="">Ninguno (camino feliz)</option>
+                <option value="document">1 · Documento</option>
+                <option value="cm">2 · Content Manager</option>
+                <option value="insurer">3 · Aseguradora</option>
+              </select>
+            </label>
+            <label class="field" *ngIf="scenario.step">
+              <span>Tipo de fallo</span>
+              <select [(ngModel)]="scenario.kind">
+                <option value="transient">Transitorio (503, se reintenta)</option>
+                <option value="permanent">Permanente (422, no se recupera)</option>
+              </select>
+            </label>
+            <label class="field" *ngIf="scenario.step && scenario.kind === 'transient'">
+              <span>Intentos fallidos (1–20)</span>
+              <input type="number" min="1" max="20" [(ngModel)]="scenario.times">
             </label>
             <label class="field">
-              <span>Nombre del cliente</span>
-              <input name="customerName" [(ngModel)]="draft.customerName"
-                required maxlength="200" placeholder="Nombre completo">
+              <span>Cantidad de ventas</span>
+              <input type="number" min="1" max="1000" [(ngModel)]="count">
             </label>
             <label class="field">
-              <span>Correo electrónico</span>
-              <input name="customerEmail" [(ngModel)]="draft.customerEmail"
-                type="email" required maxlength="320" placeholder="cliente@ejemplo.com">
+              <span>Envío</span>
+              <select [(ngModel)]="mode">
+                <option value="api">Por API pública (uno a uno, aplica throttling)</option>
+                <option value="burst">Ráfaga: todas de una vez al outbox (sin throttling)</option>
+              </select>
             </label>
-            <label class="field">
-              <span>Código de producto</span>
-              <input name="productCode" [(ngModel)]="draft.productCode"
-                required maxlength="80" placeholder="AUTO-01">
-            </label>
-            <button class="primary-button" type="submit"
-              [disabled]="saleForm.invalid || creating || !credentialsReady">
-              <span *ngIf="creating" class="spinner"></span>
-              {{ creating ? 'Enviando…' : 'Crear venta' }}
-            </button>
-            <p class="hint" *ngIf="!credentialsReady">Completa la URL y el JWT para habilitar el envío.</p>
-          </form>
+          </div>
+          <div class="prediction">
+            <p class="node-title">Resultado esperado por venta</p>
+            <p>{{ prediction }}</p>
+          </div>
+          <button class="primary-button" type="button" (click)="launch()" [disabled]="busy || !validScenario">
+            <span *ngIf="busy" class="spinner"></span>{{ busy ? progressText : 'Lanzar ' + count + ' venta(s)' }}
+          </button>
+          <p class="muted" *ngIf="lastRun">{{ lastRun }}</p>
+          <details class="cli">
+            <summary>Equivalente por CLI</summary>
+            <code>{{ cliCommand }}</code>
+          </details>
         </section>
 
-        <section class="card sales-card">
-          <div class="section-heading table-heading">
-            <div>
-              <p class="eyebrow">SEGUIMIENTO</p>
-              <h2>Ventas registradas <span class="count">{{ sales.length }}</span></h2>
-            </div>
-            <button class="secondary-button" type="button" (click)="refreshAll()"
-              [disabled]="refreshingAll || !credentialsReady || !sales.length">
-              {{ refreshingAll ? 'Consultando…' : 'Actualizar todas' }}
-            </button>
+        <!-- ===== Tiempos ===== -->
+        <section class="card">
+          <div class="section-heading">
+            <div><p class="eyebrow">TIEMPOS</p><h2>Duración de cada paso</h2></div>
+            <span class="step-number">02</span>
           </div>
-          <div class="table-wrap" *ngIf="sales.length; else emptyState">
-            <table>
-              <thead>
-                <tr>
-                  <th>Referencia</th>
-                  <th>Venta</th>
-                  <th>Estado</th>
-                  <th>Actualizada</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr *ngFor="let sale of sales">
-                  <td class="reference-cell">{{ sale.externalReference }}</td>
-                  <td><code>{{ sale.saleId }}</code></td>
-                  <td><span class="status" [ngClass]="statusClass(sale.status)">{{ sale.status }}</span>
-                    <small class="row-error" *ngIf="sale.error">{{ sale.error }}</small></td>
-                  <td>{{ sale.updatedAt ? (sale.updatedAt | date:'short') : '—' }}</td>
-                  <td>
-                    <button class="check-button" type="button" (click)="refreshSale(sale)"
-                      [disabled]="checking[sale.saleId] || !credentialsReady">
-                      {{ checking[sale.saleId] ? '…' : 'Consultar' }}
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <p class="muted">Espera aleatoria antes de documento, CM y aseguradora. Aplica al instante (tabla <code>process.lab_settings</code>). Máximo 15 000 ms: el paso expira a los 20 s.</p>
+          <div class="form-grid two" *ngIf="settings">
+            <label class="field"><span>Mínimo (ms)</span><input type="number" min="0" max="15000" step="100" [(ngModel)]="settings.stepDelayMinMs"></label>
+            <label class="field"><span>Máximo (ms)</span><input type="number" min="0" max="15000" step="100" [(ngModel)]="settings.stepDelayMaxMs"></label>
           </div>
-          <ng-template #emptyState>
-            <div class="empty-state">
-              <div class="empty-icon">↗</div>
-              <h3>Aún no hay ventas</h3>
-              <p>Al crear una venta aparecerá aquí para consultar su estado.</p>
-            </div>
-          </ng-template>
+          <div class="presets">
+            <button type="button" class="chip" (click)="setDelay(0, 0)">Lo más rápido</button>
+            <button type="button" class="chip" (click)="setDelay(500, 3000)">0.5–3 s</button>
+            <button type="button" class="chip" (click)="setDelay(0, 10000)">0–10 s</button>
+            <button type="button" class="chip" (click)="setDelay(5000, 15000)">5–15 s (lento)</button>
+          </div>
+          <button class="secondary-button" type="button" (click)="saveSettings()" [disabled]="!settings || busy">Guardar tiempos</button>
+          <div class="prediction">
+            <p class="node-title">Cómo se encadenan los reintentos</p>
+            <p>Cada entrega de SQS ejecuta una Step Function. Cada paso tiene {{ attempts }} intentos ante 503/timeout.
+              Si el paso agota sus intentos, el mensaje se libera y vuelve en {{ releaseDelay }} s (reintento global).
+              Tras {{ deliveries }} entregas va a la DLQ y la venta queda FAILED. Un fallo permanente salta directo al reintento global.</p>
+          </div>
         </section>
+      </section>
+
+      <!-- ===== Ventas ===== -->
+      <section class="card sales-card">
+        <div class="section-heading table-heading">
+          <div>
+            <p class="eyebrow">SEGUIMIENTO</p>
+            <h2>Últimas ventas <span class="count">{{ sales.length }}</span></h2>
+          </div>
+          <div class="list-controls">
+            <label class="inline-field">Mostrar
+              <select [(ngModel)]="limit" (change)="refresh()"><option *ngFor="let n of limits" [ngValue]="n">{{ n }}</option></select>
+            </label>
+            <label class="inline-field"><input type="checkbox" [(ngModel)]="autoRefresh" (change)="schedule()"> Auto 3 s</label>
+            <button class="secondary-button" type="button" (click)="refresh()">Actualizar</button>
+            <button class="check-button" type="button" (click)="toggleAll()" [disabled]="!sales.length">{{ expanded.size ? 'Contraer' : 'Expandir' }} todo</button>
+          </div>
+        </div>
+
+        <div class="sale-list" *ngIf="sales.length; else emptyState">
+          <article class="sale" *ngFor="let sale of sales; trackBy: bySaleId" [class.open]="expanded.has(sale.saleId)">
+            <div class="sale-row" role="button" tabindex="0" (click)="toggle(sale.saleId)" (keydown.enter)="toggle(sale.saleId)">
+              <span class="chevron">{{ expanded.has(sale.saleId) ? '▾' : '▸' }}</span>
+              <span class="reference-cell">{{ sale.externalReference }}</span>
+              <span class="status" [ngClass]="statusClass(sale.status)">{{ sale.status }}</span>
+              <span class="progress">{{ progress(sale) }}</span>
+              <span class="muted">{{ sale.createdAt | date:'HH:mm:ss' }} · {{ elapsed(sale) }}</span>
+              <button *ngIf="sale.status === 'FAILED'" class="check-button" type="button" (click)="retry(sale, $event)">Reintentar</button>
+            </div>
+
+            <div class="tree" *ngIf="expanded.has(sale.saleId)">
+              <ul>
+                <li>
+                  <span class="node-title">Venta registrada</span>
+                  <span class="muted"><code>{{ sale.saleId }}</code> · {{ sale.createdAt | date:'HH:mm:ss.SSS' }}</span>
+                  <ul>
+                    <li *ngFor="let g of generations(sale)">
+                      <span class="node-title">{{ g.event.generation === 1 ? 'Envío original' : 'Reintento manual ' + (g.event.generation - 1) }}</span>
+                      <span class="muted">evento creado {{ offset(sale, g.event.createdAt) }}</span>
+                      <ul>
+                        <li>
+                          <span class="node-title">Outbox → SQS</span>
+                          <span class="status" [ngClass]="g.event.publishedAt ? 'completed' : 'processing'">{{ g.event.publishedAt ? 'PUBLICADO' : 'PENDIENTE' }}</span>
+                          <span class="muted" *ngIf="g.event.publishedAt">{{ offset(sale, g.event.publishedAt) }} · {{ g.event.attempts }} intento(s)</span>
+                          <small class="row-error" *ngIf="g.event.error">{{ g.event.error }}</small>
+                        </li>
+                        <li *ngFor="let a of g.attempts">
+                          <span class="node-title">{{ label(a.step) }}</span>
+                          <span class="status" [ngClass]="outcomeClass(a.outcome)">{{ a.outcome }}</span>
+                          <span class="muted">{{ offset(sale, a.startedAt) }} · espera {{ seconds(a.delayMs) }}
+                            <ng-container *ngIf="a.durationMs != null"> · total {{ seconds(a.durationMs) }}</ng-container></span>
+                          <small class="row-error" *ngIf="a.detail">{{ a.detail }}</small>
+                        </li>
+                        <li *ngIf="!g.attempts.length && g.event.publishedAt" class="muted">Esperando a Step Functions…</li>
+                      </ul>
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  <span class="node-title">Estado actual</span>
+                  <span class="status" [ngClass]="statusClass(sale.status)">{{ sale.status }}</span>
+                  <span class="muted" *ngIf="sale.updatedAt">{{ offset(sale, sale.updatedAt) }}</span>
+                  <small class="row-error" *ngIf="sale.error">{{ sale.error }}</small>
+                </li>
+              </ul>
+            </div>
+          </article>
+        </div>
+        <ng-template #emptyState>
+          <div class="empty-state"><div class="empty-icon">↗</div><h3>Aún no hay ventas</h3><p>Lanza un escenario arriba o usa <code>aws/load.sh</code>.</p></div>
+        </ng-template>
       </section>
 
       <div class="toast" *ngIf="message" [class.error]="messageKind === 'error'" role="status">
         <span>{{ message }}</span>
         <button type="button" aria-label="Cerrar mensaje" (click)="message = ''">×</button>
       </div>
-      <footer>El estado inicial es <strong>ACCEPTED</strong>. El procesamiento puede tardar hasta un minuto.</footer>
     </main>
   `,
   styleUrl: './app.component.css'
 })
-export class AppComponent {
-  apiUrl = localStorage.getItem(API_URL_KEY)
-    ?? (['127.0.0.1', 'localhost'].includes(window.location.hostname) ? '' : '/api/v1');
-  token = '';
-  sales: SaleRow[] = this.readSales();
-  creating = false;
-  refreshingAll = false;
-  checking: Record<string, boolean> = {};
+export class AppComponent implements OnInit, OnDestroy {
+  readonly attempts = STEP_ATTEMPTS;
+  readonly deliveries = DELIVERIES;
+  readonly releaseDelay = RELEASE_DELAY_S;
+  readonly presets: Preset[] = [
+    { name: 'Camino feliz', step: '', kind: 'transient', times: 1 },
+    { name: 'Reintento de paso (CM falla 2)', step: 'cm', kind: 'transient', times: 2 },
+    { name: 'Reintento global (Documento falla 3)', step: 'document', kind: 'transient', times: 3 },
+    { name: 'Éxito en la última entrega (Aseguradora falla 8)', step: 'insurer', kind: 'transient', times: 8 },
+    { name: 'Agota todo → DLQ (CM falla 9)', step: 'cm', kind: 'transient', times: 9 },
+    { name: 'Permanente → DLQ (Aseguradora)', step: 'insurer', kind: 'permanent', times: 1 }
+  ];
+
+  system?: SystemView;
+  systemError = '';
+  settings?: LabSettings;
+  sales: SaleView[] = [];
+  expanded = new Set<string>();
+  limits = [20, 50, 100, 200];
+  limit = 50;
+  autoRefresh = true;
+  scenario: Scenario = { step: '', kind: 'transient', times: 1 };
+  count = 1;
+  mode: 'api' | 'burst' = 'api';
+  busy = false;
+  progressText = '';
+  lastRun = '';
   message = '';
   messageKind: 'success' | 'error' = 'success';
-  draft: SaleRequest = {
-    externalReference: '',
-    customerName: '',
-    customerEmail: '',
-    productCode: 'AUTO-01'
-  };
+  private timer?: ReturnType<typeof setInterval>;
+  private polling = false;
 
   constructor(private readonly api: SalesApiService) {}
 
-  get credentialsReady(): boolean {
-    const url = this.apiUrl.trim();
-    return Boolean(url && (this.token.trim() || url.startsWith('/api/')));
+  ngOnInit(): void {
+    this.api.settings().then(s => this.settings = s).catch(e => this.notify(this.errorMessage(e), 'error'));
+    this.refresh();
+    this.schedule();
   }
 
-  saveApiUrl(): void {
-    localStorage.setItem(API_URL_KEY, this.apiUrl.trim());
+  ngOnDestroy(): void {
+    clearInterval(this.timer);
   }
 
-  async createSale(): Promise<void> {
-    this.creating = true;
-    this.clearMessage();
+  schedule(): void {
+    clearInterval(this.timer);
+    if (this.autoRefresh) this.timer = setInterval(() => this.refresh(), 3000);
+  }
+
+  async refresh(): Promise<void> {
+    if (this.polling) return;
+    this.polling = true;
     try {
-      const request = { ...this.draft, externalReference: this.draft.externalReference.trim() };
-      const created = await this.api.create(this.apiUrl, this.token, request);
-      this.upsert({
-        saleId: created.saleId,
-        externalReference: request.externalReference,
-        status: created.status ?? 'ACCEPTED',
-        updatedAt: created.updatedAt,
-        error: created.error
-      });
-      this.draft = { externalReference: '', customerName: '', customerEmail: '', productCode: 'AUTO-01' };
-      this.notify(`Venta aceptada: ${created.saleId}`);
-    } catch (error) {
-      this.notify(this.errorMessage(error), 'error');
+      const [sales, system] = await Promise.allSettled([this.api.list(this.limit), this.api.system()]);
+      if (sales.status === 'fulfilled') this.sales = sales.value;
+      if (system.status === 'fulfilled') { this.system = system.value; this.systemError = ''; }
+      else this.systemError = this.errorMessage(system.reason);
     } finally {
-      this.creating = false;
+      this.polling = false;
     }
   }
 
-  async refreshSale(sale: SaleRow): Promise<void> {
-    this.checking[sale.saleId] = true;
-    this.clearMessage();
-    try {
-      const result = await this.api.status(this.apiUrl, this.token, sale.saleId);
-      this.upsert({ ...sale, ...result });
-      this.notify(`Estado actualizado: ${result.status}`);
-    } catch (error) {
-      this.notify(this.errorMessage(error), 'error');
-    } finally {
-      this.checking[sale.saleId] = false;
-    }
+  // ---------- Scenario ----------
+  get failure(): string {
+    const s = this.scenario;
+    return s.step ? `${s.step}:${s.kind}:${s.kind === 'permanent' ? 1 : s.times}` : '';
   }
 
-  async refreshAll(): Promise<void> {
-    this.refreshingAll = true;
+  get validScenario(): boolean {
+    const timesOk = !this.scenario.step || this.scenario.kind === 'permanent' || (this.scenario.times >= 1 && this.scenario.times <= 20);
+    return timesOk && this.count >= 1 && this.count <= 1000;
+  }
+
+  get prediction(): string {
+    const s = this.scenario;
+    if (!s.step) return 'COMPLETED en la entrega 1, sin reintentos.';
+    const step = STEP_LABELS[s.step];
+    if (s.kind === 'permanent') {
+      return `${step} responde 422 en cada entrega: sin reintento de paso. Tras ${DELIVERIES} entregas (~${(DELIVERIES - 1) * RELEASE_DELAY_S} s) → FAILED y mensaje en DLQ. "Reintentar" crea un envío nuevo sin el fallo.`;
+    }
+    const delivery = Math.floor(s.times / STEP_ATTEMPTS) + 1;
+    if (delivery > DELIVERIES) {
+      return `${step} falla ${s.times} veces: agota ${STEP_ATTEMPTS} intentos × ${DELIVERIES} entregas → FAILED y mensaje en DLQ. Un redrive lo reprocesa${s.times > STEP_ATTEMPTS * DELIVERIES + STEP_ATTEMPTS ? ' (seguirá fallando ' + (s.times - STEP_ATTEMPTS * DELIVERIES) + ' veces)' : ''}.`;
+    }
+    const attempt = (s.times % STEP_ATTEMPTS) + 1;
+    return delivery === 1
+      ? `${step} falla ${s.times} vez/veces y se recupera con el reintento de paso (intento ${attempt} de la entrega 1). COMPLETED sin reintento global.`
+      : `${step} agota sus intentos en ${delivery - 1} entrega(s); reintento global tras ${RELEASE_DELAY_S} s → se recupera en la entrega ${delivery}, intento ${attempt}. COMPLETED.`;
+  }
+
+  get cliCommand(): string {
+    const f = this.failure ? ` -f ${this.failure}` : '';
+    return this.mode === 'burst'
+      ? `curl -s -X POST "$SITE/api/v1/lab/burst" -H 'Content-Type: application/json' -d '{"count":${this.count}${this.failure ? `,"failure":"${this.failure}"` : ''}}'`
+      : `aws/load.sh -n ${this.count} -c ${Math.min(4, this.count)}${f}`;
+  }
+
+  apply(p: Preset): void {
+    this.scenario = { step: p.step, kind: p.kind, times: p.times };
+  }
+
+  isPreset(p: Preset): boolean {
+    const s = this.scenario;
+    return s.step === p.step && (!s.step || (s.kind === p.kind && (s.kind === 'permanent' || s.times === p.times)));
+  }
+
+  async launch(): Promise<void> {
+    this.busy = true;
+    this.lastRun = '';
+    const failure = this.failure;
+    const run = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
     try {
-      for (const sale of [...this.sales]) {
-        await this.refreshSale(sale);
+      if (this.mode === 'burst') {
+        this.progressText = 'Insertando en el outbox…';
+        const r = await this.api.burst(this.count, failure);
+        this.lastRun = `Ráfaga ${r.prefix}: ${r.count} ventas aceptadas en una transacción. Mira Outbox → Cola → Pods → Nodos.`;
+      } else {
+        const codes = new Map<string, number>();
+        let next = 0;
+        const worker = async () => {
+          while (next < this.count) {
+            const i = ++next;
+            this.progressText = `Enviando ${i}/${this.count}…`;
+            try {
+              await this.api.create({ externalReference: `UI-${run}-${i}`, customerName: `Lab ${i}`,
+                customerEmail: `lab${i}@example.com`, productCode: 'AUTO-01' }, failure);
+              codes.set('202', (codes.get('202') ?? 0) + 1);
+            } catch (e) {
+              const code = e instanceof HttpErrorResponse ? String(e.status) : 'error';
+              codes.set(code, (codes.get(code) ?? 0) + 1);
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, this.count) }, worker));
+        this.lastRun = `UI-${run}: ` + [...codes].map(([c, n]) => `${n}× ${c}`).join(' · ') + (codes.has('429') ? ' (429 = throttling de API Gateway)' : '');
       }
+      await this.refresh();
+    } catch (e) {
+      this.notify(this.errorMessage(e), 'error');
     } finally {
-      this.refreshingAll = false;
+      this.busy = false;
     }
+  }
+
+  // ---------- Settings / DLQ / retry ----------
+  setDelay(min: number, max: number): void {
+    this.settings = { stepDelayMinMs: min, stepDelayMaxMs: max };
+    this.saveSettings();
+  }
+
+  async saveSettings(): Promise<void> {
+    if (!this.settings) return;
+    try {
+      this.settings = await this.api.saveSettings(this.settings);
+      this.notify(`Tiempos: ${this.settings.stepDelayMinMs}–${this.settings.stepDelayMaxMs} ms por paso`);
+    } catch (e) {
+      this.notify(this.errorMessage(e), 'error');
+    }
+  }
+
+  async redrive(): Promise<void> {
+    this.busy = true;
+    try {
+      await this.api.redrive();
+      this.notify('Redrive iniciado: los mensajes de la DLQ vuelven a la cola principal.');
+    } catch (e) {
+      this.notify(this.errorMessage(e), 'error');
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async retry(sale: SaleView, event: Event): Promise<void> {
+    event.stopPropagation();
+    try {
+      await this.api.retry(sale.saleId);
+      this.expanded.add(sale.saleId);
+      this.notify(`Reintento manual de ${sale.externalReference}: nuevo envío sin fallo inducido.`);
+      await this.refresh();
+    } catch (e) {
+      this.notify(this.errorMessage(e), 'error');
+    }
+  }
+
+  // ---------- Sales tree ----------
+  toggle(saleId: string): void {
+    if (!this.expanded.delete(saleId)) this.expanded.add(saleId);
+  }
+
+  toggleAll(): void {
+    this.expanded = this.expanded.size ? new Set() : new Set(this.sales.map(s => s.saleId));
+  }
+
+  bySaleId(_: number, sale: SaleView): string {
+    return sale.saleId;
+  }
+
+  generations(sale: SaleView): TreeGeneration[] {
+    return sale.outbox.map((event, i) => {
+      const from = Date.parse(event.createdAt);
+      const next = sale.outbox[i + 1];
+      const to = next ? Date.parse(next.createdAt) : Infinity;
+      return { event, attempts: sale.history.filter(a => Date.parse(a.startedAt) >= from && Date.parse(a.startedAt) < to) };
+    });
+  }
+
+  progress(sale: SaleView): string {
+    const done = new Set(sale.history.filter(a => this.outcomeClass(a.outcome) === 'completed').map(a => a.step));
+    const running = sale.history.find(a => a.outcome === 'RUNNING');
+    const errors = sale.history.filter(a => a.outcome === 'ERROR').length;
+    const steps = ['document', 'cm', 'insurer'].filter(s => done.has(s)).length;
+    const base = running ? `${steps}/3 · en curso: ${STEP_LABELS[running.step] ?? running.step}` : `${steps}/3 pasos`;
+    return errors ? `${base} · ${errors} error(es)` : base;
+  }
+
+  elapsed(sale: SaleView): string {
+    const end = sale.status === 'COMPLETED' || sale.status === 'FAILED' ? Date.parse(sale.updatedAt ?? sale.createdAt) : Date.now();
+    return this.seconds(end - Date.parse(sale.createdAt));
+  }
+
+  offset(sale: SaleView, at: string): string {
+    return `+${this.seconds(Date.parse(at) - Date.parse(sale.createdAt))}`;
+  }
+
+  seconds(ms: number): string {
+    return `${(Math.max(0, ms) / 1000).toFixed(1)} s`;
+  }
+
+  label(step: string): string {
+    return STEP_LABELS[step] ?? step;
+  }
+
+  nodeGroups(s: SystemView): string[] {
+    const groups = new Map<string, number>();
+    (s.kubernetes.nodes ?? []).forEach(n => {
+      const key = `${n.pool} · ${n.capacityType} · ${n.instanceType}${n.ready ? '' : ' (no listo)'}`;
+      groups.set(key, (groups.get(key) ?? 0) + 1);
+    });
+    return [...groups].map(([k, n]) => `${n}× ${k}`);
+  }
+
+  entries(map: Record<string, number>): { key: string; value: number }[] {
+    return Object.entries(map).map(([key, value]) => ({ key, value }));
   }
 
   statusClass(status: string): string {
     return status.toLowerCase();
   }
 
-  private upsert(sale: SaleRow): void {
-    const index = this.sales.findIndex(item => item.saleId === sale.saleId);
-    this.sales = index < 0
-      ? [sale, ...this.sales]
-      : this.sales.map(item => item.saleId === sale.saleId ? { ...item, ...sale } : item);
-    this.persistSales();
-  }
-
-  private readSales(): SaleRow[] {
-    try {
-      const value: unknown = JSON.parse(localStorage.getItem(SALES_KEY) ?? '[]');
-      return Array.isArray(value) ? value as SaleRow[] : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private persistSales(): void {
-    localStorage.setItem(SALES_KEY, JSON.stringify(this.sales));
+  outcomeClass(outcome: string): string {
+    if (['DONE', 'RECONCILED', 'ALREADY_DONE', 'COMPLETED'].includes(outcome)) return 'completed';
+    if (outcome === 'RUNNING') return 'processing';
+    return 'failed';
   }
 
   private errorMessage(error: unknown): string {
-    if (error instanceof HttpErrorResponse && (error.status === 401 || error.status === 403)) {
-      return 'Autenticación rechazada. Genera un JWT nuevo; el token de práctica vence en una hora.';
+    if (error instanceof HttpErrorResponse) {
+      const body = error.error as { message?: string; error?: string } | null;
+      if (error.status === 0) return 'No se pudo conectar con la API.';
+      if (error.status === 404) return 'Ruta no disponible: actualiza el stack 06 y la imagen de la API.';
+      return `HTTP ${error.status}: ${body?.message ?? body?.error ?? error.statusText}`;
     }
-    if (error instanceof HttpErrorResponse && error.status === 0) {
-      return 'No se pudo conectar con LocalStack. Verifica que el laboratorio esté activo y que la URL de API Gateway sea correcta.';
-    }
-    if (error instanceof Error && error.message) {
-      return error.message;
-    }
-    return 'No se pudo completar la solicitud. Verifica la URL, el JWT y que el laboratorio esté activo.';
+    return error instanceof Error ? error.message : 'No se pudo completar la solicitud.';
   }
 
   private notify(message: string, kind: 'success' | 'error' = 'success'): void {
     this.message = message;
     this.messageKind = kind;
-  }
-
-  private clearMessage(): void {
-    this.message = '';
   }
 }

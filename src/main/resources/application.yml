@@ -34,6 +34,17 @@ management:
 app:
   lab:
     purchases-enabled: ${LAB_PURCHASES_ENABLED:false}
+    # Test panel (UI): live queues/pods/nodes, burst, DLQ redrive. On in the AWS api Deployment only.
+    panel:
+      enabled: ${LAB_PANEL_ENABLED:false}
+      queue-url: ${LAB_QUEUE_URL:}
+      dlq-url: ${LAB_DLQ_URL:}
+      namespace: ${LAB_NAMESPACE:micro}
+      # Budget limits shown in the panel (rendered by bootstrap.sh from CloudFormation and its knobs).
+      max-concurrency: ${LAB_MAX_CONCURRENCY:0}
+      api-max-replicas: ${LAB_API_MAX_REPLICAS:0}
+      messages-per-pod: ${LAB_MESSAGES_PER_POD:0}
+      karpenter-cpu-limit: ${LAB_KARPENTER_CPU_LIMIT:0}
   s3:
     region: ${AWS_REGION:us-east-1}
     endpoint: ${S3_ENDPOINT_URL:}

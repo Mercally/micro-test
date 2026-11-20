@@ -21,7 +21,7 @@ sequenceDiagram
     participant EXT as CM / Aseguradora (mocks)
   end
   box rgb(255,245,230) Subred aislada
-    participant DB as Aurora
+    participant DB as RDS PostgreSQL
   end
   box rgb(245,240,255) Servicios gestionados
     participant Q as SQS

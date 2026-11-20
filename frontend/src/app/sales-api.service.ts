@@ -1,6 +1,9 @@
-import { HttpClient, HttpErrorResponse, HttpHeaders } from '@angular/common/http';
+import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
+
+/** Same origin: CloudFront serves the SPA and routes /api/* to API Gateway (AWS lab). */
+const API = '/api/v1';
 
 export interface SaleRequest {
   externalReference: string;
@@ -9,75 +12,100 @@ export interface SaleRequest {
   productCode: string;
 }
 
-export interface SaleStatus {
-  saleId: string;
-  status: string;
-  updatedAt?: string;
+export interface StepAttempt {
+  step: string;
+  outcome: string;
+  detail?: string | null;
+  delayMs: number;
+  durationMs?: number | null;
+  startedAt: string;
+  finishedAt?: string | null;
+}
+
+export interface OutboxEvent {
+  generation: number;
+  createdAt: string;
+  publishedAt?: string | null;
+  attempts: number;
   error?: string | null;
-  downloadUrl?: string;
+}
+
+export interface SaleView {
+  saleId: string;
+  externalReference: string;
+  status: string;
+  generation: number;
+  error?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+  outbox: OutboxEvent[];
+  history: StepAttempt[];
+}
+
+export interface LabSettings {
+  stepDelayMinMs: number;
+  stepDelayMaxMs: number;
+}
+
+export interface QueueView {
+  configured: boolean;
+  name?: string;
+  visible?: number;
+  inFlight?: number;
+  delayed?: number;
+  error?: string;
+}
+
+export interface SystemView {
+  queues: { main: QueueView; dlq: QueueView };
+  outboxPending: number;
+  sales: Record<string, number>;
+  running: number;
+  kubernetes: {
+    available: boolean;
+    error?: string;
+    deployments?: { name: string; desired: number; ready: number }[];
+    pendingPods?: Record<string, number>;
+    hpa?: { name: string; current: number; desired: number; min: number; max: number }[];
+    nodes?: { name: string; pool: string; capacityType: string; instanceType: string; ready: boolean }[];
+  };
+  limits: Record<string, number>;
 }
 
 @Injectable({ providedIn: 'root' })
 export class SalesApiService {
   private readonly http = inject(HttpClient);
 
-  async create(baseUrl: string, token: string, sale: SaleRequest): Promise<SaleStatus> {
-    return firstValueFrom(this.http.post<SaleStatus>(
-      this.apiUrl(baseUrl, '/purchases'),
-      sale,
-      { headers: this.headers(token) }
-    ));
+  create(sale: SaleRequest, failure?: string): Promise<{ saleId: string; status: string }> {
+    const headers: Record<string, string> = failure ? { 'X-Lab-Failure': failure } : {};
+    return firstValueFrom(this.http.post<{ saleId: string; status: string }>(`${API}/purchases`, sale, { headers }));
   }
 
-  async status(baseUrl: string, token: string, saleId: string): Promise<SaleStatus> {
-    return firstValueFrom(this.http.get<SaleStatus>(
-      this.apiUrl(baseUrl, `/purchases/${encodeURIComponent(saleId)}`),
-      { headers: this.headers(token) }
-    ));
+  list(limit: number): Promise<SaleView[]> {
+    return firstValueFrom(this.http.get<SaleView[]>(`${API}/purchases?limit=${limit}`));
   }
 
-  private headers(token: string): HttpHeaders {
-    const headers = new HttpHeaders({ 'Content-Type': 'application/json' });
-    // AWS lab API has no auth (N09); LocalStack still requires the practice JWT.
-    return token.trim() ? headers.set('Authorization', `Bearer ${token.trim()}`) : headers;
+  retry(saleId: string): Promise<unknown> {
+    return firstValueFrom(this.http.post(`${API}/purchases/${encodeURIComponent(saleId)}/retry`, {}));
   }
 
-  private apiUrl(baseUrl: string, resource: string): string {
-    const value = baseUrl.trim().replace(/\/+$/, '');
-    if (!value) {
-      throw new Error('Configura la URL base de API Gateway.');
-    }
+  settings(): Promise<LabSettings> {
+    return firstValueFrom(this.http.get<LabSettings>(`${API}/lab/settings`));
+  }
 
-    // AWS: CloudFront serves the SPA and routes /api/* to API Gateway on the same origin.
-    if (value.startsWith('/api/')) {
-      return `${value}${resource}`;
-    }
+  saveSettings(settings: LabSettings): Promise<LabSettings> {
+    return firstValueFrom(this.http.put<LabSettings>(`${API}/lab/settings`, settings));
+  }
 
-    if (value.startsWith('/_aws/execute-api/')) {
-      return `/gateway${value}${resource}`;
-    }
+  system(): Promise<SystemView> {
+    return firstValueFrom(this.http.get<SystemView>(`${API}/lab/system`));
+  }
 
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      throw new Error('La URL debe ser http://127.0.0.1:4566/_aws/execute-api/<api-id>/lab.');
-    }
+  burst(count: number, failure?: string): Promise<{ prefix: string; count: number }> {
+    return firstValueFrom(this.http.post<{ prefix: string; count: number }>(`${API}/lab/burst`, { count, failure: failure || null }));
+  }
 
-    if (!['127.0.0.1', 'localhost'].includes(url.hostname) || url.port !== '4566'
-      || !url.pathname.startsWith('/_aws/execute-api/')) {
-      throw new Error('Usa el endpoint local de API Gateway generado en purchase.http.');
-    }
-
-    const apiPath = `${url.pathname}${resource}`;
-    const sameOriginTunnel = window.location.pathname.startsWith('/micro-test-local-frontend/')
-      && window.location.hostname === url.hostname;
-    if (window.location.origin === url.origin || sameOriginTunnel) {
-      return apiPath;
-    }
-    if (window.location.port === '4200') {
-      return `/gateway${apiPath}`;
-    }
-    return `${url.origin}${apiPath}`;
+  redrive(): Promise<unknown> {
+    return firstValueFrom(this.http.post(`${API}/lab/dlq/redrive`, {}));
   }
 }

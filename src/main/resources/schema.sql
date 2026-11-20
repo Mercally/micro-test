@@ -118,3 +118,27 @@ CREATE TABLE IF NOT EXISTS endpoint0.lab_faults (
     remaining INTEGER NOT NULL,
     permanent BOOLEAN NOT NULL DEFAULT FALSE
 );
+
+-- AWS flow: one row per step attempt (RUNNING -> outcome). Read by GET /api/v1/purchases (UI tree).
+CREATE TABLE IF NOT EXISTS process.history (
+    id BIGSERIAL PRIMARY KEY,
+    sale_id UUID NOT NULL,
+    step VARCHAR(32) NOT NULL,
+    outcome VARCHAR(32) NOT NULL,
+    detail TEXT,
+    delay_ms INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS history_sale ON process.history(sale_id, id);
+
+-- Lab knob, read on every step call: random pause in [min,max] ms before document/cm/insurer.
+-- Max 15000: the Step Functions HTTP task times out at 20 s.
+CREATE TABLE IF NOT EXISTS process.lab_settings (
+    id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+    step_delay_min_ms INTEGER NOT NULL DEFAULT 0,
+    step_delay_max_ms INTEGER NOT NULL DEFAULT 10000,
+    CHECK (step_delay_min_ms >= 0 AND step_delay_max_ms >= step_delay_min_ms AND step_delay_max_ms <= 15000)
+);
+INSERT INTO process.lab_settings(id) VALUES (TRUE) ON CONFLICT DO NOTHING;

@@ -35,7 +35,7 @@ flowchart LR
     KAR["Karpenter<br/>NodePool workloads<br/>tope limits.cpu"]
     NODE["Nodos EC2 arm64<br/>Spot / On-Demand"]
   end
-  DB[("Aurora<br/>0 a MaxCapacity ACU")]
+  DB[("RDS PostgreSQL<br/>DbInstanceClass")]
 
   Q --> ESM --> L --> SF -->|"pasos HTTP"| POD
   Q -.->|"GetQueueAttributes"| KO --> HPA -->|"replicas"| DEP --> POD
@@ -48,7 +48,7 @@ flowchart LR
 | Admisión | Mensajes disponibles | ESM | Hasta N Lambdas → N ejecuciones | Segundos |
 | Pods | Mensajes visibles + en vuelo / 8 | KEDA → HPA | Réplicas de `api` entre 1 y ceil(N/8) | 15 s sondeo + ~30–40 s arranque JVM |
 | Nodos | Pods `Pending` por falta de CPU/memoria | Karpenter | Lanza el nodo más barato que cabe; consolida al sobrar | ~45–90 s por nodo |
-| Datos | Carga SQL | Aurora | Sube/baja ACU hasta `MaxCapacity` | Segundos |
+| Datos | Carga SQL | RDS PostgreSQL | No escala solo: cambiar `DbInstanceClass` (reinicio ~5 min) | Manual |
 
 **HPA:** no se escribe a mano. KEDA crea `keda-hpa-api` desde el `ScaledObject`; el HPA
 ejecuta el escalado con la métrica externa que KEDA le publica. Inspección:
@@ -68,7 +68,7 @@ ejecuta el escalado con la métrica externa que KEDA le publica. Inspección:
 | NodePool `workloads` | Tipos, Spot/On-Demand, tope, consolidación | `aws/kubernetes/platform.yaml` | `KARPENTER_CPU_LIMIT` (16), familias, tamaños |
 | EC2NodeClass `workloads` | Subred AZ A, SG, AMI, disco | `aws/kubernetes/platform.yaml` | — |
 | Nodos base | Controladores y sistema | `05-eks.yaml` `BaseNodeGroup` | `NodeCount`, `NodeInstanceType` |
-| Aurora | Techo de capacidad de BD | `03-data.yaml` | `MaxCapacity` (4 ACU) |
+| RDS PostgreSQL | Techo de capacidad de BD | `03-data.yaml` | `DbInstanceClass` (db.t4g.micro) |
 | Pool JDBC | Conexiones por pod | `application.yml` Hikari | `maximum-pool-size` (10) |
 | Entrada pública | Compras por segundo | `06-ingress.yaml` | `ThrottlingRateLimit`, `ThrottlingBurstLimit` |
 
@@ -80,7 +80,7 @@ ejecuta el escalado con la métrica externa que KEDA le publica. Inspección:
 | 2 | `API_MAX_REPLICAS` = ceil(N / `API_MESSAGES_PER_POD`) — el bootstrap lo calcula | Con mucha cola, KEDA crea pods que nadie usa y Karpenter paga nodos ociosos |
 | 3 | `API_MESSAGES_PER_POD` ≤ pool Hikari (10) | Pasos esperando conexión → timeouts de 20 s → reintentos |
 | 4 | `KARPENTER_CPU_LIMIT` ≥ CPU solicitada por todos los pods de app + daemonsets por nodo | Pods `Pending` con "limits exceeded": es el techo del laboratorio, a propósito |
-| 5 | (api máx + worker + mocks) × 10 conexiones ≤ `max_connections` de Aurora | Errores de conexión bajo carga (`SHOW max_connections` vía Data API) |
+| 5 | (api máx + worker + mocks) × 10 conexiones ≤ `max_connections` de RDS (~80 en db.t4g.micro) | Errores de conexión bajo carga (`SHOW max_connections` desde un pod) |
 | 6 | Timeouts encadenados: paso HTTP 20 s · SFN 300 s < Lambda 330 s < visibility 360 s | Ejecuciones duplicadas o mensajes que reaparecen a mitad de proceso |
 | 7 | Sin reintentos en Istio (`retries.attempts: 0`) | Reintentos multiplicados: Istio × paso × entrega |
 
@@ -119,6 +119,6 @@ laboratorio) o elevar `minReplicaCount` antes de una prueba.
 | Cola crece, Lambda activas = N, API sin errores | Admisión es el cuello de botella | Subir `MaxConcurrency` |
 | Latencia p99 / faults de api suben, pods al máximo | Pods saturados | Bajar `API_MESSAGES_PER_POD` o subir requests |
 | Pods `Pending`, nodos no crecen | Tope de Karpenter alcanzado | `KARPENTER_CPU_LIMIT` |
-| ACU en `MaxCapacity`, latencia SQL alta | Techo de base de datos | `MaxCapacity` (03) |
+| CPU de RDS al 100 % o conexiones al tope, latencia SQL alta | Techo de base de datos | `DbInstanceClass` (03) |
 | Reintentos y DLQ en ráfagas al subir carga | Arranque de pods/nodos más lento que la rampa | Escalones más suaves o `minReplicaCount` |
 | 429 en API pública | Throttling de entrada (esperado) | `ThrottlingRateLimit` (06) |

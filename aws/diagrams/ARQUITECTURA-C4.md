@@ -63,7 +63,7 @@ C4Container
   }
 
   Boundary(dbnet, "Subredes aisladas de DB (sin ruta a Internet)", "Frontera 5") {
-    ContainerDb(aurora, "Aurora PostgreSQL", "Serverless v2, 0–4 ACU, KMS", "Ventas, outbox, faults del lab.")
+    ContainerDb(aurora, "RDS PostgreSQL", "db.t4g.micro single-AZ, KMS", "Ventas, outbox, faults del lab.")
   }
 
   Rel(user, cf, "Carga SPA", "HTTPS")
@@ -117,7 +117,7 @@ flowchart LR
     SFN[Step Functions<br/>Standard]
     CONN[EventBridge<br/>Connection]
     S3D[(S3 documentos<br/>KMS, solo HTTPS)]
-    SM[Secrets Manager<br/>secreto Aurora]
+    SM[Secrets Manager<br/>secreto BD]
     KMS{{KMS CMK}}
   end
 
@@ -139,7 +139,7 @@ flowchart LR
       S3EP[S3 gateway<br/>endpoint]
     end
     subgraph DB["Frontera 5 — subred aislada · SG db :5432 solo desde SG app"]
-      AUR[(Aurora PostgreSQL<br/>Serverless v2)]
+      AUR[(RDS PostgreSQL<br/>db.t4g.micro)]
     end
   end
 
@@ -170,9 +170,9 @@ flowchart LR
 | 2. Servicios gestionados | SQS ↔ Lambda ↔ SFN ↔ S3 | Rol IAM por componente, mínimo privilegio; cifrado KMS en reposo |
 | 3. Entrada a la VPC | API Gateway (VPC Link) y SFN (Resource Gateway) → NLB | NLB interno sin IP pública; SG NLB solo admite 443 desde VPC Link y Resource Gateway; SG app solo admite 8080/15021 desde el NLB; TLS termina en el NLB (ACM) |
 | 4. Malla Istio | Gateway → API, pod → pod | mTLS STRICT (CA istiod); AuthorizationPolicy: `/internal/*` solo con credencial del workflow (D07 pendiente) |
-| 5. Datos | Pods → Aurora | Subred sin ruta a Internet; SG db solo desde SG app; secreto gestionado; KMS |
+| 5. Datos | Pods → RDS | Subred sin ruta a Internet; SG db solo desde SG app; secreto gestionado; KMS |
 | Egreso | Pods → ECR, SQS, AWS APIs | NAT único (sin tolerancia a caída de AZ A, N08); S3 por gateway endpoint gratuito |
-| Operación | Mac → EKS API, AWS APIs | Endpoint EKS público restringido por CIDR/IAM (D11 pendiente); Data API de Aurora para SQL |
+| Operación | Mac → EKS API, AWS APIs | Endpoint EKS público restringido por CIDR/IAM (D11 pendiente); SQL solo desde pods (sin Data API en RDS) |
 
 ## Piezas de integración
 
@@ -243,7 +243,7 @@ por paso (invocación extra, descartada en el plan original) y API Gateway delan
 |---|---|---|
 | VPC | Subredes en 2 AZ, tags `kubernetes.io/role/internal-elb` y `karpenter.sh/discovery`, NAT único, S3 gateway endpoint, SG app/db | 01 |
 | KMS | Llave única con rotación; acceso delegado a IAM | 02 |
-| Aurora | Serverless v2 0–4 ACU, auto-pausa, secreto gestionado, Data API, snapshot al borrar | 03 |
+| RDS PostgreSQL | db.t4g.micro single-AZ, gp3 20 GiB, secreto propio, snapshot al borrar (N23) | 03 |
 | S3 temporal | Privado, SSE-KMS, solo HTTPS, lifecycle | 03 |
 | SQS + DLQ | KMS, visibility 360 s > timeout SFN 300 s, `maxReceiveCount` 3 | 04 |
 | ESM | Ver tramo 1 | 04 |
@@ -264,7 +264,7 @@ por paso (invocación extra, descartada en el plan original) y API Gateway delan
 |---|---|---|
 | VPC, subredes, NAT, SG, S3 endpoint | `01-network.yaml` | Lint OK |
 | KMS | `02-security.yaml` | Lint OK |
-| Aurora, secreto, S3 documentos | `03-data.yaml` | Lint OK |
+| RDS PostgreSQL, secreto, S3 documentos | `03-data.yaml` | Lint OK |
 | SQS, DLQ + alarma, Lambda, Step Functions, Connection | `04-messaging.yaml` | Lint OK |
 | EKS, node group base, add-ons, Pod Identity, IAM y cola Karpenter | `05-eks.yaml` | Lint OK |
 | Certificado ACM, DNS, NLB, VPC Link, API Gateway, Resource Gateway | `06-ingress.yaml` | Lint OK |

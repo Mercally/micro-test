@@ -200,6 +200,21 @@ Resources:
       RouteKey: POST /api/v1/purchases
       Target: !Sub 'integrations/${NlbIntegration}'
 
+  ListRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/v1/purchases
+      Target: !Sub 'integrations/${NlbIntegration}'
+
+  # Test panel (settings, live system view, burst, DLQ redrive). Public like the rest (N09).
+  LabRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: ANY /api/v1/lab/{proxy+}
+      Target: !Sub 'integrations/${NlbIntegration}'
+
   StatusRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
