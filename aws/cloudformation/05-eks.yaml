@@ -40,8 +40,9 @@ Parameters:
   NodeCount:
     Type: Number
     Default: 2
-    MinValue: 1
+    MinValue: 0
     MaxValue: 5
+    Description: Base nodes. 0 = lab paused (aws/lab-pause.sh); controllers stop, control plane keeps billing.
   AppNamespace:
     Type: String
     Default: micro
@@ -49,6 +50,9 @@ Parameters:
     Type: Number
     Default: 7
     AllowedValues: [1, 3, 5, 7, 14, 30]
+
+Conditions:
+  Paused: !Equals [!Ref NodeCount, 0]
 
 Resources:
   # ---------- Control plane (~$0.10/h) ----------
@@ -134,7 +138,8 @@ Resources:
       InstanceTypes: [!Ref NodeInstanceType]
       Subnets: [!Select [0, !Split [',', { 'Fn::ImportValue': !Sub '${NetworkStack}-AppSubnetIds' }]]]
       LaunchTemplate: { Id: !Ref NodeLaunchTemplate, Version: !GetAtt NodeLaunchTemplate.LatestVersionNumber }
-      ScalingConfig: { MinSize: !Ref NodeCount, DesiredSize: !Ref NodeCount, MaxSize: !Ref NodeCount }
+      # EKS requires MaxSize >= 1, so a paused lab (NodeCount 0) keeps MaxSize 1 with zero nodes.
+      ScalingConfig: { MinSize: !Ref NodeCount, DesiredSize: !Ref NodeCount, MaxSize: !If [Paused, 1, !Ref NodeCount] }
       Labels: { role: base }
 
   # ---------- Managed add-ons (versions: EKS default for the cluster version) ----------

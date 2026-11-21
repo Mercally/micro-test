@@ -1,0 +1,54 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  micro-test AWS lab - 10 budget. One monthly cost budget with email alerts when actual spend passes
+  three absolute amounts (default $50, $100, $150) and when the month is forecast to pass the last one.
+  Alerts only: a budget never stops resources (pause: aws/lab-pause.sh). Credits and refunds are
+  excluded so alerts reflect real usage even while account credits pay the bill.
+
+Parameters:
+  Project:
+    Type: String
+    Default: micro-test
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  AlertEmail:
+    Type: String
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    Description: Recipient of the budget alerts.
+  FirstAlertUsd:
+    Type: Number
+    Default: 50
+  SecondAlertUsd:
+    Type: Number
+    Default: 100
+  ThirdAlertUsd:
+    Type: Number
+    Default: 150
+    Description: Also the budget limit and the forecast alert amount.
+
+Resources:
+  # Free: the first two budgets per account cost nothing (no budget actions used).
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub '${Project}-monthly'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref ThirdAlertUsd, Unit: USD }
+        CostTypes:
+          IncludeCredit: false
+          IncludeRefund: false
+          IncludeTax: true
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: !Ref FirstAlertUsd, ThresholdType: ABSOLUTE_VALUE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: !Ref SecondAlertUsd, ThresholdType: ABSOLUTE_VALUE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: !Ref ThirdAlertUsd, ThresholdType: ABSOLUTE_VALUE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: !Ref ThirdAlertUsd, ThresholdType: ABSOLUTE_VALUE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+
+Outputs:
+  BudgetName:
+    Value: !Sub '${Project}-monthly'

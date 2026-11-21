@@ -17,6 +17,7 @@ Revisión con change sets, fallos y rollback: [CLOUDFORMATION.md](../CLOUDFORMAT
 | 07 | `07-frontend.yaml` | `micro-test-frontend` | 06 | No | Build + subir Angular | Centavos: CloudFront y S3 por uso |
 | 08 | `08-observability.yaml` | `micro-test-observability` | 04, 05, 06 | No | — | Dashboard ~$3/mes; Application Signals y Container Insights por uso |
 | 09 | `09-registry.yaml` | `micro-test-registry` | — (cualquier momento antes de subir la imagen) | No | — | ECR ~$0.10/GB-mes (últimas 10 imágenes) |
+| 10 | `10-budget.yaml` | `micro-test-budget` | — | No | Email para alertas | Gratis (primeros 2 budgets) |
 
 Sin costos ocultos: 00 y 02 retienen sus recursos al borrar (ver Eliminación).
 
@@ -257,6 +258,7 @@ Antes de borrar 05: eliminar NodePools de Karpenter y esperar que sus nodos term
 
 ```bash
 aws s3 rm "s3://micro-test-frontend-$(aws sts get-caller-identity --query Account --output text)-us-east-1" --recursive
+aws cloudformation delete-stack --stack-name micro-test-budget
 aws cloudformation delete-stack --stack-name micro-test-registry
 aws cloudformation delete-stack --stack-name micro-test-observability
 aws cloudformation delete-stack --stack-name micro-test-frontend

@@ -139,16 +139,24 @@ Generador `aws/load.sh` (N ventas distintas o la misma, secuencial con pausa o e
 fallos inducidos) y comandos de observación (cola, Step Functions, pods, nodos, SQL, RPS):
 [CARGA.md](../CARGA.md).
 
-## Detener (sin borrar)
+## Pausar y reanudar (ahorro cuando no hay pruebas)
 
 ```bash
-kubectl -n micro annotate scaledobject api autoscaling.keda.sh/paused-replicas=0 --overwrite
-kubectl -n micro scale deploy/worker deploy/mocks --replicas=0
+aws/lab-pause.sh
+aws/lab-resume.sh
 ```
 
-Sin pods de la app, Karpenter consolida y elimina sus nodos (~1 min) . Siguen cobrando: control plane EKS, nodos base, RDS (no se pausa), NAT
-y NLB. Para reanudar: quitar la anotación (`autoscaling.keda.sh/paused-replicas-`) y
-escalar worker/mocks a 1. Para eliminar todo: ver orden de eliminación del runbook.
+| Modo | Qué queda encendido | Costo aprox. | Volver |
+|---|---|---|---|
+| Encendido sin pruebas | Todo | ~$8–9/día | — |
+| **Pausado** (`lab-pause.sh`) | Control plane EKS, NAT + IPv4, NLB, discos | **~$4.4/día** | `lab-resume.sh`, ~15 min |
+| Borrado (runbook CloudFormation, "Eliminación") | Zonas DNS, llave KMS, snapshot RDS | ~$0.1/día | Redesplegar 01–09 + bootstrap, ~1 h |
+
+`lab-pause.sh` apaga en orden: entrada pública (API Gateway responde 429 a todo), consumo (los mensajes esperan en SQS), pods de la app, nodos de
+Karpenter (espera a que desaparezcan antes de detener a Karpenter), nodos base (stack 05
+`NodeCount=0`) y RDS. `lab-resume.sh` lo invierte y abre consumo y entrada al final (throttling `THROTTLE_RATE`/`THROTTLE_BURST`, default 10/20). Nada se pierde: cola
+(4 días), outbox y BD se conservan. AWS reinicia RDS solo a los 7 días detenida: para pausas más
+largas, volver a correr `lab-pause.sh` o borrar el lab.
 
 ## Pendientes conocidos
 
